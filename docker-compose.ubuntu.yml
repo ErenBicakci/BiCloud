@@ -1,0 +1,47 @@
+# BiCloud - Ubuntu machine (gateway + docker socket proxy)
+# The worker runs natively on this machine: java -jar bicloud-worker.jar
+# The control plane is on another machine; its address comes from .env.
+#
+# The gateway connects to the Docker daemon over TCP via a socket-proxy rather
+# than a unix socket; the in-container unix socket connection was not stable here.
+#
+# docker compose -f docker-compose.ubuntu.yml up --build -d
+
+services:
+
+  bicloud-socket-proxy:
+    image: tecnativa/docker-socket-proxy
+    container_name: bicloud-socket-proxy
+    restart: unless-stopped
+    environment:
+      # permissions the gateway needs: list networks + connect/disconnect
+      NETWORKS: 1
+      POST: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  bicloud-gateway:
+    build:
+      context: ./bicloud-gateway
+      dockerfile: Dockerfile
+    image: bicloud-gateway:latest
+    pull_policy: build
+    container_name: bicloud-gateway
+    restart: unless-stopped
+    depends_on:
+      - bicloud-socket-proxy
+    ports:
+      - "9000:9000"
+    environment:
+      # Control plane address and key come from .env (see .env.example)
+      BICLOUD_CONTROL_PLANE_URL:      ${BICLOUD_CONTROL_PLANE_URL:?see .env.example}
+      BICLOUD_GATEWAY_API_KEY:        ${BICLOUD_GATEWAY_API_KEY:?see .env.example}
+      BICLOUD_GATEWAY_CONTAINER_NAME: bicloud-gateway
+      # connect to the Docker daemon over TCP via the socket-proxy
+      BICLOUD_GATEWAY_DOCKER_HOST:    tcp://bicloud-socket-proxy:2375
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/gateway/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

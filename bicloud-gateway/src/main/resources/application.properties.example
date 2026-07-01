@@ -1,0 +1,37 @@
+# Copy this to application.properties and fill in the values.
+# The real application.properties is gitignored.
+
+spring.application.name=bicloud-gateway
+
+server.port=9000
+
+spring.cloud.compatibility-verifier.enabled=false
+
+spring.cloud.gateway.discovery.locator.enabled=false
+
+# Key for gateway-to-gateway and CP-to-gateway calls
+bicloud.gateway.api-key=CHANGE_ME
+
+bicloud.gateway.container-name=bicloud-gateway
+
+bicloud.gateway.docker-host=unix:///var/run/docker.sock
+
+bicloud.gateway.network-scan-interval-ms=60000
+
+# Fixed control plane address - can be overridden via compose env
+bicloud.control-plane.url=http://CONTROL_PLANE_IP:8080
+
+# For the CP's /api/workers/discover endpoint (remote mesh routing) -
+# must be the SAME as bicloud.api-key on the control plane
+bicloud.control-plane.api-key=CHANGE_ME
+
+# Host port of the gateways on other machines (second mesh hop)
+bicloud.gateway.port=9000
+
+# Actuator
+management.endpoints.web.exposure.include=health,info,gateway
+management.endpoint.gateway.enabled=true
+
+# Logging
+logging.level.com.bic.cloud=DEBUG
+logging.level.org.springframework.cloud.gateway=INFO

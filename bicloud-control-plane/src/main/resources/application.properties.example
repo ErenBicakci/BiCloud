@@ -1,0 +1,28 @@
+# Copy this to application.properties and fill in the values.
+# The real application.properties is gitignored.
+
+spring.application.name=bicloud-control-plane
+spring.datasource.url=jdbc:postgresql://localhost:5432/bicloud
+spring.datasource.username=postgres
+spring.datasource.password=CHANGE_ME
+spring.datasource.driver-class-name=org.postgresql.Driver
+spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect
+spring.jpa.hibernate.ddl-auto=update
+
+# Authentication - service key shared with the workers
+bicloud.api-key=CHANGE_ME
+
+bicloud.gateway.url=http://localhost:9000
+bicloud.gateway.port=9000
+bicloud.gateway.api-key=CHANGE_ME
+
+
+# JWT - use a random secret of at least 32 characters
+jwt.secret=CHANGE_ME_MIN_32_CHARS
+jwt.expiration=86400000
+
+rate.limit.capacity=100
+rate.limit.refill-seconds=60
+
+rate.limit.api.capacity=60
+rate.limit.api.refill-seconds=60

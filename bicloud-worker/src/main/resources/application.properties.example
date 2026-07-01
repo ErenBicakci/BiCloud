@@ -1,0 +1,24 @@
+# Copy this to application.properties and fill in the values.
+# The real application.properties is gitignored.
+
+spring.application.name=bicloud-worker
+server.port=8081
+
+docker.host=unix:///var/run/docker.sock
+worker.name=worker-1
+# If left blank, WorkerAddressResolver auto-detects it
+# (the IP of the interface towards the control plane)
+worker.ip=
+worker.version=1.0.1
+worker.control-plane-url=http://CONTROL_PLANE_IP:8080
+
+# This machine's gateway (mesh / east-west traffic) - alias injected into containers
+bicloud.gateway.alias=bicloud-gateway
+bicloud.gateway.port=9000
+
+# Authentication - must be the SAME as bicloud.api-key on the control plane
+bicloud.api-key=CHANGE_ME
+
+
+bicloud.gateway.url=http://localhost:9000
+bicloud.gateway.api-key=CHANGE_ME

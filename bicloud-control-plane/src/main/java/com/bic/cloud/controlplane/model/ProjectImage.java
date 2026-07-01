@@ -1,0 +1,71 @@
+package com.bic.cloud.controlplane.model;
+
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.util.Map;
+
+@Entity
+@Table(name = "project_images")
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class ProjectImage {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "project_id", nullable = false)
+    private UserProject project;
+
+    @Column(nullable = false)
+    private String serviceName;
+
+    @Column(nullable = false)
+    private String imageName;
+
+    @Column(nullable = false)
+    private int desiredReplicas;
+
+    @Column(nullable = false)
+    private int containerPort;
+
+    @ElementCollection(fetch = FetchType.LAZY)
+    @CollectionTable(name = "project_image_env_vars", joinColumns = @JoinColumn(name = "project_image_id"))
+    @MapKeyColumn(name = "env_key")
+    @Column(name = "env_value")
+    private Map<String, String> environmentVariables;
+
+    @Column(name = "memory_limit_mb")
+    private Integer memoryLimitMb;
+
+    @Column(name = "cpu_limit")
+    private Double cpuLimit;
+
+    @Column(nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+
+     // self-healing backoff: consecutive failed deploy attempts. reset to 0 on success
+
+    @Column(name = "consecutive_deploy_failures", nullable = false, columnDefinition = "integer default 0")
+    @Builder.Default
+    private int consecutiveDeployFailures = 0;
+
+    /**
+     * Time of the last failed deploy attempt. Used for the cooldown window.
+     */
+    @Column(name = "last_deploy_failure_at")
+    private Instant lastDeployFailureAt;
+
+    @PrePersist
+    protected void onCreate() {
+        this.createdAt = LocalDateTime.now();
+    }
+}
