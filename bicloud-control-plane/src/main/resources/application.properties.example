@@ -9,6 +9,10 @@ spring.datasource.driver-class-name=org.postgresql.Driver
 spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect
 spring.jpa.hibernate.ddl-auto=update
 
+# @Scheduled tasks share a single thread by default; a wider pool keeps the
+# worker health check running while self-healing performs long deploys.
+spring.task.scheduling.pool.size=4
+
 # Authentication - service key shared with the workers
 bicloud.api-key=CHANGE_ME
 
