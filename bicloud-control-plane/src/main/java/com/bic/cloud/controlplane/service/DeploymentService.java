@@ -15,13 +15,19 @@ import com.bic.cloud.controlplane.repository.WorkerStateRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Deliberately NOT @Transactional: these flows call workers over HTTP (an image
+ * pull can take minutes) and a transaction here would hold a DB connection for
+ * that entire time - a handful of concurrent deploys could exhaust the pool and
+ * freeze the whole CP. Each repository save commits on its own; consistency is
+ * maintained by the reconciliation/self-healing loops, not by rollback.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -36,7 +42,6 @@ public class DeploymentService {
     private final GatewayNotificationService gatewayNotificationService;
     private final WorkerStateRepository workerStateRepository;
 
-    @Transactional
     public void deploy(ProjectImage projectImage) {
 
         long runningCount = containerInstanceRepository
@@ -56,7 +61,6 @@ public class DeploymentService {
         deployReplicas(projectImage, needed, (int) runningCount);
     }
 
-    @Transactional
     public void scale(ProjectImage projectImage, int newReplicas) {
 
         long currentRunning = containerInstanceRepository
@@ -80,7 +84,6 @@ public class DeploymentService {
         }
     }
 
-    @Transactional
     public void undeployProject(Long projectId) {
 
         List<ContainerInstance> running = containerInstanceRepository.findRunningByProjectId(projectId);

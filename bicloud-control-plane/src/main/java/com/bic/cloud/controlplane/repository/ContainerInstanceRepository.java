@@ -27,8 +27,15 @@ public interface ContainerInstanceRepository extends JpaRepository<ContainerInst
 
     long countByWorkerNodeAndStatus(WorkerNode workerNode, ContainerInstance.InstanceStatus status);
 
+    @EntityGraph(attributePaths = {"workerNode", "projectImage", "projectImage.project"})
     List<ContainerInstance> findByProjectImage(ProjectImage image);
 
+    /**
+     * Eagerly loads worker + image + project: callers iterate these instances
+     * outside a transaction (gateway deregister, worker stop calls), so lazy
+     * access would fail there.
+     */
+    @EntityGraph(attributePaths = {"workerNode", "projectImage", "projectImage.project"})
     List<ContainerInstance> findByProjectImageAndStatus(ProjectImage image, ContainerInstance.InstanceStatus status);
 
     long countByProjectImageAndStatus(ProjectImage image, ContainerInstance.InstanceStatus status);

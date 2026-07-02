@@ -13,11 +13,18 @@ import com.bic.cloud.controlplane.security.BicloudUserDetails;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.HashMap;
 import java.util.List;
 
+/**
+ * Methods here mix DB writes with worker HTTP calls (stop, remove, create -
+ * the last one can pull an image for minutes). None of them are @Transactional:
+ * a transaction spanning the HTTP call would pin a DB connection for its whole
+ * duration. Instead, the record mutations that must be atomic run in a narrow
+ * {@link TransactionTemplate} block and the HTTP calls stay outside.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -30,8 +37,8 @@ public class OrchestrationService {
     private final UserProjectRepository userProjectRepository;
     private final DeploymentService deploymentService;
     private final AuditService auditService;
+    private final TransactionTemplate transactionTemplate;
 
-    @Transactional
     public void deployProject(Long projectId, BicloudUserDetails caller) {
 
         UserProject project = projectService.findById(projectId);
@@ -57,7 +64,6 @@ public class OrchestrationService {
                 "Deployed " + images.size() + " service(s)");
     }
 
-    @Transactional
     public void undeployProject(Long projectId, BicloudUserDetails caller) {
 
         UserProject project = projectService.findById(projectId);
@@ -79,7 +85,6 @@ public class OrchestrationService {
      * then deletes the image and project records.
      */
     //could be turned into a soft delete later
-    @Transactional
     public void deleteProject(Long projectId, BicloudUserDetails caller) {
 
         UserProject project = projectService.findById(projectId);
@@ -87,24 +92,25 @@ public class OrchestrationService {
 
         log.info("Deleting project '{}' (id={}): stopping all containers first", project.getName(), projectId);
 
-        // 1. stop all running containers on the workers
+        // 1. stop all running containers on the workers (HTTP, outside any transaction)
         deploymentService.undeployProject(projectId);
-
-        // 2. delete container instance records
-        List<ContainerInstance> allInstances = containerInstanceRepository.findAllByProjectId(projectId);
-        containerInstanceRepository.deleteAll(allInstances);
-
-        // 3. delete image records (env var table goes with cascade)
-        List<ProjectImage> images = projectImageRepository.findByProject_Id(projectId);
-        projectImageRepository.deleteAll(images);
 
         // audit: record BEFORE deleting (entity and owner references are gone afterwards)
         auditService.userAction(caller, AuditEvent.AuditAction.PROJECT_DELETED,
                 AuditEvent.TargetType.PROJECT, project.getName(), project,
-                "Project deleted along with " + images.size() + " service(s)");
+                "Project deleted");
 
-        // 4. delete the project
-        userProjectRepository.delete(project);
+        // 2-4. record deletions are atomic
+        transactionTemplate.executeWithoutResult(tx -> {
+            List<ContainerInstance> allInstances = containerInstanceRepository.findAllByProjectId(projectId);
+            containerInstanceRepository.deleteAll(allInstances);
+
+            // image records (env var table goes with cascade)
+            List<ProjectImage> images = projectImageRepository.findByProject_Id(projectId);
+            projectImageRepository.deleteAll(images);
+
+            userProjectRepository.deleteById(projectId);
+        });
 
         log.info("Project '{}' (id={}) deleted successfully.", project.getName(), projectId);
     }
@@ -112,7 +118,6 @@ public class OrchestrationService {
     /**
      * Stops/removes the running containers of an image, then deletes the image record.
      */
-    @Transactional
     public void deleteProjectImage(Long imageId, BicloudUserDetails caller) {
 
         ProjectImage image = projectImageService.findByIdWithProject(imageId);
@@ -121,7 +126,7 @@ public class OrchestrationService {
         log.info("Deleting image '{}' (id={}) from project '{}'",
                 image.getServiceName(), imageId, image.getProject().getName());
 
-        // 1. stop running containers on the workers
+        // 1. stop running containers on the workers (HTTP, outside any transaction)
         List<ContainerInstance> running = containerInstanceRepository
                 .findByProjectImageAndStatus(image, ContainerInstance.InstanceStatus.RUNNING);
         for (ContainerInstance instance : running) {
@@ -133,17 +138,19 @@ public class OrchestrationService {
             }
         }
 
-        // 2. delete all instance records of this image
-        List<ContainerInstance> allInstances = containerInstanceRepository.findByProjectImage(image);
-        containerInstanceRepository.deleteAll(allInstances);
-
         // audit: before deleting
         auditService.userAction(caller, AuditEvent.AuditAction.SERVICE_DELETED,
                 AuditEvent.TargetType.SERVICE, image.getServiceName(), image.getProject(),
                 "Service deleted");
 
-        // 3. delete the image (env var table goes with cascade)
-        projectImageRepository.delete(image);
+        // 2-3. record deletions are atomic
+        transactionTemplate.executeWithoutResult(tx -> {
+            List<ContainerInstance> allInstances = containerInstanceRepository.findByProjectImage(image);
+            containerInstanceRepository.deleteAll(allInstances);
+
+            // the image itself (env var table goes with cascade)
+            projectImageRepository.deleteById(imageId);
+        });
 
         log.info("ProjectImage '{}' (id={}) deleted successfully.", image.getServiceName(), imageId);
     }
@@ -153,7 +160,6 @@ public class OrchestrationService {
      * Running containers still carry the old configuration, so they are all
      * stopped and redeployed with the new one.
      */
-    @Transactional
     public void updateProjectImage(Long imageId, UpdateProjectImageDto dto, BicloudUserDetails caller) {
 
         ProjectImage image = projectImageService.findByIdWithProject(imageId);
@@ -162,28 +168,34 @@ public class OrchestrationService {
         log.info("Updating image '{}' (id={}) in project '{}'",
                 image.getServiceName(), imageId, image.getProject().getName());
 
-        image.setImageName(dto.getImageName());
-        image.setContainerPort(dto.getContainerPort());
-        image.setMemoryLimitMb(dto.getMemoryLimitMb());
-        image.setCpuLimit(dto.getCpuLimit());
+        // config mutation is atomic; the entity must be managed while the
+        // @ElementCollection map is mutated in place
+        ProjectImage updated = transactionTemplate.execute(tx -> {
+            ProjectImage managed = projectImageService.findByIdWithProject(imageId);
 
-        // @ElementCollection: mutate the managed map in place, don't replace the reference
-        if (image.getEnvironmentVariables() == null) {
-            image.setEnvironmentVariables(new HashMap<>());
-        }
-        image.getEnvironmentVariables().clear();
-        if (dto.getEnvironmentVariables() != null) {
-            image.getEnvironmentVariables().putAll(dto.getEnvironmentVariables());
-        }
+            managed.setImageName(dto.getImageName());
+            managed.setContainerPort(dto.getContainerPort());
+            managed.setMemoryLimitMb(dto.getMemoryLimitMb());
+            managed.setCpuLimit(dto.getCpuLimit());
 
-        // config changed; the old cooldown no longer means anything
-        image.setConsecutiveDeployFailures(0);
-        image.setLastDeployFailureAt(null);
-        projectImageRepository.save(image);
+            // @ElementCollection: mutate the managed map in place, don't replace the reference
+            if (managed.getEnvironmentVariables() == null) {
+                managed.setEnvironmentVariables(new HashMap<>());
+            }
+            managed.getEnvironmentVariables().clear();
+            if (dto.getEnvironmentVariables() != null) {
+                managed.getEnvironmentVariables().putAll(dto.getEnvironmentVariables());
+            }
 
-        // stop containers running with the old configuration
+            // config changed; the old cooldown no longer means anything
+            managed.setConsecutiveDeployFailures(0);
+            managed.setLastDeployFailureAt(null);
+            return projectImageRepository.save(managed);
+        });
+
+        // stop containers running with the old configuration (HTTP, outside any transaction)
         List<ContainerInstance> running = containerInstanceRepository
-                .findByProjectImageAndStatus(image, ContainerInstance.InstanceStatus.RUNNING);
+                .findByProjectImageAndStatus(updated, ContainerInstance.InstanceStatus.RUNNING);
         for (ContainerInstance instance : running) {
             try {
                 deploymentService.stopAndRemove(instance);
@@ -194,8 +206,8 @@ public class OrchestrationService {
         }
 
         // bring up the desired replica count with the new configuration
-        if (image.getDesiredReplicas() > 0) {
-            deploymentService.deploy(image);
+        if (updated.getDesiredReplicas() > 0) {
+            deploymentService.deploy(updated);
         }
 
         log.info("ProjectImage '{}' (id={}) updated successfully.", image.getServiceName(), imageId);
@@ -205,7 +217,6 @@ public class OrchestrationService {
                 "Service updated (image=" + image.getImageName() + "), containers recreated");
     }
 
-    @Transactional
     public void scale(Long imageId, int newReplicas, BicloudUserDetails caller) {
 
         ProjectImage image = projectImageService.findByIdWithProject(imageId);
@@ -215,10 +226,13 @@ public class OrchestrationService {
                 image.getServiceName(), image.getProject().getName(), newReplicas);
 
         int oldReplicas = image.getDesiredReplicas();
-        deploymentService.scale(image, newReplicas);
 
+        // persist the new desired state FIRST: if the worker calls below fail,
+        // self-healing converges to it instead of the stale count
         image.setDesiredReplicas(newReplicas);
         projectImageRepository.save(image);
+
+        deploymentService.scale(image, newReplicas);
 
         log.info("Service '{}' scaled to {} replicas.", image.getServiceName(), newReplicas);
 

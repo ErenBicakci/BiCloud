@@ -11,7 +11,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -54,8 +53,10 @@ public class SelfHealingScheduler {
     private static final int CRASH_LOOP_THRESHOLD = 5;
     private static final Duration CRASH_LOOP_WINDOW = Duration.ofMinutes(5);
 
+    // NOT @Transactional: deploy/scale below reach workers over HTTP (an image
+    // pull can take minutes) and a transaction would pin a DB connection for the
+    // whole loop. findAllWithProject fetch-joins everything the loop touches.
     @Scheduled(fixedDelay = 30000)
-    @Transactional
     public void reconcile() {
 
         long secondsSinceStartup = Instant.now().getEpochSecond() - startupTime.getEpochSecond();
@@ -185,7 +186,7 @@ public class SelfHealingScheduler {
         return true;
     }
 
-    /** Lazy owner access - safe inside the @Transactional scheduler. */
+    /** Owner is fetch-joined by findAllWithProject; the guard stays just in case. */
     private String ownerOf(ProjectImage image) {
         try {
             return image.getProject().getOwner() != null
