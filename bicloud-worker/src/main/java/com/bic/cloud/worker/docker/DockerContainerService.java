@@ -6,6 +6,7 @@ import com.bic.cloud.worker.exception.DockerOperationException;
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.command.CreateContainerResponse;
 import com.github.dockerjava.api.command.InspectContainerResponse;
+import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.model.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,13 +36,7 @@ public class DockerContainerService {
         String networkName = DockerNetworkService.networkName(req.getProjectName());
         String networkId   = dockerNetworkService.ensureNetworkExists(req.getProjectName());
 
-        boolean pulled = dockerClient.pullImageCmd(req.getImageName())
-                .start()
-                .awaitCompletion(10, TimeUnit.MINUTES);
-        if (!pulled) {
-            throw new DockerOperationException(req.getImageName(), "pull",
-                    new RuntimeException("Image pull timed out: " + req.getImageName()));
-        }
+        pullImageIfMissing(req.getImageName());
 
         ExposedPort exposedPort = ExposedPort.tcp(req.getContainerPort());
 
@@ -125,6 +120,32 @@ public class DockerContainerService {
                 log.error("Could not clean up half-created container {}: {}", containerId, cleanupEx.getMessage());
             }
             throw new DockerOperationException(containerId, "create", e);
+        }
+    }
+
+    /**
+     * "IfNotPresent" pull policy: an unconditional pull contacts the registry
+     * on EVERY deploy even when the image is already local - needless latency
+     * and it eats into Docker Hub rate limits. Tags are treated as immutable
+     * here; a user who republishes the same tag redeploys with a version bump
+     * (or the image can be removed manually on the worker).
+     */
+    private void pullImageIfMissing(String imageName) throws InterruptedException {
+        try {
+            dockerClient.inspectImageCmd(imageName).exec();
+            log.debug("Image already present locally, skipping pull: {}", imageName);
+            return;
+        } catch (NotFoundException e) {
+            // not local - fall through to pull
+        }
+
+        log.info("Pulling image: {}", imageName);
+        boolean pulled = dockerClient.pullImageCmd(imageName)
+                .start()
+                .awaitCompletion(10, TimeUnit.MINUTES);
+        if (!pulled) {
+            throw new DockerOperationException(imageName, "pull",
+                    new RuntimeException("Image pull timed out: " + imageName));
         }
     }
 
