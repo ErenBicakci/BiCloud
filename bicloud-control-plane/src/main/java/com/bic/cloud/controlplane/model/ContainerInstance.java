@@ -49,6 +49,14 @@ public class ContainerInstance {
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
+    /**
+     * When the container actually reached RUNNING. createdAt marks the PENDING
+     * reservation, which can precede this by minutes (image pull) - liveness
+     * grace periods must use this, not createdAt.
+     */
+    @Column(name = "started_at")
+    private Instant startedAt;
+
     @PrePersist
     protected void onCreate() {
         this.createdAt = Instant.now();

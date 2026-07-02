@@ -77,8 +77,12 @@ public class ContainerReconciliationService {
                 continue;
             }
 
-            // grace period: might have been created after the snapshot, leave it to the next round
-            if (ci.getCreatedAt() != null && ci.getCreatedAt().isAfter(graceCutoff)) {
+            // grace period: might have started after the snapshot, leave it to
+            // the next round. startedAt marks the actual RUNNING transition;
+            // createdAt is the PENDING reservation, which can be minutes older
+            // (image pull) and would defeat the grace check here.
+            Instant startedAt = ci.getStartedAt() != null ? ci.getStartedAt() : ci.getCreatedAt();
+            if (startedAt != null && startedAt.isAfter(graceCutoff)) {
                 continue;
             }
 

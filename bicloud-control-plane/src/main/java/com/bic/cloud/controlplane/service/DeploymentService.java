@@ -14,12 +14,15 @@ import com.bic.cloud.controlplane.repository.ProjectImageRepository;
 import com.bic.cloud.controlplane.repository.WorkerStateRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Deliberately NOT @Transactional: these flows call workers over HTTP (an image
@@ -42,46 +45,99 @@ public class DeploymentService {
     private final GatewayNotificationService gatewayNotificationService;
     private final WorkerStateRepository workerStateRepository;
 
+    /**
+     * Images with a deploy/scale currently executing. Guards against the same
+     * service being deployed twice concurrently (double click, or self-healing
+     * firing while a previous round is still queued on the executor).
+     */
+    private final Set<Long> imagesInFlight = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Deploys on the deployment executor and returns immediately. The image is
+     * re-loaded fully initialized because this runs outside any request session.
+     */
+    @Async("deploymentExecutor")
+    public void deployAsync(Long imageId) {
+        if (!imagesInFlight.add(imageId)) {
+            log.info("[Async] Deploy already in flight for imageId={}. Skipping.", imageId);
+            return;
+        }
+        try {
+            projectImageRepository.findByIdForDeployment(imageId).ifPresentOrElse(
+                    this::deploy,
+                    () -> log.warn("[Async] Deploy skipped - image no longer exists: id={}", imageId));
+        } catch (Exception e) {
+            log.error("[Async] Deploy failed for imageId={}", imageId, e);
+        } finally {
+            imagesInFlight.remove(imageId);
+        }
+    }
+
+    /** Async counterpart of {@link #scale} - see {@link #deployAsync}. */
+    @Async("deploymentExecutor")
+    public void scaleAsync(Long imageId, int newReplicas) {
+        if (!imagesInFlight.add(imageId)) {
+            log.info("[Async] Deploy already in flight for imageId={}. Skipping scale.", imageId);
+            return;
+        }
+        try {
+            projectImageRepository.findByIdForDeployment(imageId).ifPresentOrElse(
+                    image -> scale(image, newReplicas),
+                    () -> log.warn("[Async] Scale skipped - image no longer exists: id={}", imageId));
+        } catch (Exception e) {
+            log.error("[Async] Scale failed for imageId={}", imageId, e);
+        } finally {
+            imagesInFlight.remove(imageId);
+        }
+    }
+
     public void deploy(ProjectImage projectImage) {
 
-        long runningCount = containerInstanceRepository
-                .countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.RUNNING);
+        // PENDING counts as alive: those replicas are being created right now
+        // (image pull in progress) - topping them up would double-deploy.
+        long aliveCount = countAlive(projectImage);
 
-        int needed = projectImage.getDesiredReplicas() - (int) runningCount;
+        int needed = projectImage.getDesiredReplicas() - (int) aliveCount;
 
         if (needed <= 0) {
-            log.info("Service '{}' already has {}/{} RUNNING containers. Skipping.",
-                    projectImage.getServiceName(), runningCount, projectImage.getDesiredReplicas());
+            log.info("Service '{}' already has {}/{} RUNNING/PENDING containers. Skipping.",
+                    projectImage.getServiceName(), aliveCount, projectImage.getDesiredReplicas());
             return;
         }
 
         log.info("Deploying {} new replica(s) for '{}' (current={}, desired={})",
-                needed, projectImage.getServiceName(), runningCount, projectImage.getDesiredReplicas());
+                needed, projectImage.getServiceName(), aliveCount, projectImage.getDesiredReplicas());
 
-        deployReplicas(projectImage, needed, (int) runningCount);
+        deployReplicas(projectImage, needed, (int) aliveCount);
     }
 
     public void scale(ProjectImage projectImage, int newReplicas) {
 
-        long currentRunning = containerInstanceRepository
-                .countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.RUNNING);
+        long currentAlive = countAlive(projectImage);
 
-        if (newReplicas > currentRunning) {
-            int toAdd = newReplicas - (int) currentRunning;
+        if (newReplicas > currentAlive) {
+            int toAdd = newReplicas - (int) currentAlive;
             log.info("Scaling UP '{}': {} -> {} (+{} replicas)",
-                    projectImage.getServiceName(), currentRunning, newReplicas, toAdd);
-            deployReplicas(projectImage, toAdd, (int) currentRunning);
+                    projectImage.getServiceName(), currentAlive, newReplicas, toAdd);
+            deployReplicas(projectImage, toAdd, (int) currentAlive);
 
-        } else if (newReplicas < currentRunning) {
-            int toRemove = (int) currentRunning - newReplicas;
+        } else if (newReplicas < currentAlive) {
+            int toRemove = (int) currentAlive - newReplicas;
             log.info("Scaling DOWN '{}': {} -> {} (-{} replicas)",
-                    projectImage.getServiceName(), currentRunning, newReplicas, toRemove);
+                    projectImage.getServiceName(), currentAlive, newReplicas, toRemove);
             removeReplicas(projectImage, toRemove);
 
         } else {
             log.info("Service '{}' already at {} replicas. No action needed.",
                     projectImage.getServiceName(), newReplicas);
         }
+    }
+
+    private long countAlive(ProjectImage projectImage) {
+        return containerInstanceRepository
+                .countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.RUNNING)
+             + containerInstanceRepository
+                .countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.PENDING);
     }
 
     public void undeployProject(Long projectId) {
@@ -133,19 +189,26 @@ public class DeploymentService {
                     projectImage.getServiceName(),
                     bestWorker.getWorkerName(), bestWorker.getId());
 
+            // PENDING row BEFORE the worker call: it reserves capacity for the
+            // scheduler and tells self-healing/UI a replica is on its way while
+            // the image pull runs. Committed immediately (no surrounding tx).
+            ContainerInstance instance = containerInstanceRepository.save(
+                    ContainerInstance.builder()
+                            .projectImage(projectImage)
+                            .workerNode(bestWorker)
+                            .assignedPort(0)
+                            .status(ContainerInstance.InstanceStatus.PENDING)
+                            .build());
+
             try {
                 WorkerContainerCreateResponse response =
                         workerHttpClient.createContainer(bestWorker, request);
 
-                ContainerInstance instance = ContainerInstance.builder()
-                        .dockerContainerId(response.getContainerId())
-                        .projectImage(projectImage)
-                        .workerNode(bestWorker)
-                        .assignedPort(response.getAssignedPort() != null ? response.getAssignedPort() : 0)
-                        .containerIp(response.getContainerIp())
-                        .status(ContainerInstance.InstanceStatus.RUNNING)
-                        .build();
-
+                instance.setDockerContainerId(response.getContainerId());
+                instance.setAssignedPort(response.getAssignedPort() != null ? response.getAssignedPort() : 0);
+                instance.setContainerIp(response.getContainerIp());
+                instance.setStatus(ContainerInstance.InstanceStatus.RUNNING);
+                instance.setStartedAt(Instant.now());
                 containerInstanceRepository.save(instance);
 
                 // register with the gateway - the CP is the single authority
@@ -164,14 +227,8 @@ public class DeploymentService {
                         projectImage.getServiceName(),
                         bestWorker.getWorkerName(), e);
 
-                ContainerInstance failedInstance = ContainerInstance.builder()
-                        .projectImage(projectImage)
-                        .workerNode(bestWorker)
-                        .assignedPort(0)
-                        .status(ContainerInstance.InstanceStatus.FAILED)
-                        .build();
-
-                containerInstanceRepository.save(failedInstance);
+                instance.setStatus(ContainerInstance.InstanceStatus.FAILED);
+                containerInstanceRepository.save(instance);
                 failureCount++;
             }
         }

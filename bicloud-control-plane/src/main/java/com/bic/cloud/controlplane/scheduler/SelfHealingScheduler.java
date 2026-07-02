@@ -53,6 +53,13 @@ public class SelfHealingScheduler {
     private static final int CRASH_LOOP_THRESHOLD = 5;
     private static final Duration CRASH_LOOP_WINDOW = Duration.ofMinutes(5);
 
+    /**
+     * A PENDING instance older than this is an orphan (its deploy thread is
+     * gone - the worker's pull timeout is 10 min, the CP's HTTP read timeout
+     * 15 min, so nothing legitimate is still in flight past 20).
+     */
+    private static final Duration PENDING_TIMEOUT = Duration.ofMinutes(20);
+
     // NOT @Transactional: deploy/scale below reach workers over HTTP (an image
     // pull can take minutes) and a transaction would pin a DB connection for the
     // whole loop. findAllWithProject fetch-joins everything the loop touches.
@@ -66,6 +73,8 @@ public class SelfHealingScheduler {
             return;
         }
 
+        failStalePendingInstances();
+
         List<ProjectImage> allImages = projectImageRepository.findAllWithProject();
 
         for (ProjectImage image : allImages) {
@@ -77,8 +86,11 @@ public class SelfHealingScheduler {
                 continue;
             }
 
+            // PENDING counts as alive: those replicas are being created right now
             long runningCount = containerInstanceRepository
-                    .countByProjectImageAndStatus(image, ContainerInstance.InstanceStatus.RUNNING);
+                    .countByProjectImageAndStatus(image, ContainerInstance.InstanceStatus.RUNNING)
+                    + containerInstanceRepository
+                    .countByProjectImageAndStatus(image, ContainerInstance.InstanceStatus.PENDING);
 
             if (runningCount < desired) {
 
@@ -103,11 +115,14 @@ public class SelfHealingScheduler {
                         desired - runningCount);
 
                 try {
-                    deploymentService.deploy(image);
+                    // async: a long image pull must not stall this loop for the
+                    // other tenants; PENDING counting keeps the next cycles from
+                    // re-firing while the deploy is in flight
+                    deploymentService.deployAsync(image.getId());
                     auditService.systemAction(COMPONENT, AuditEvent.AuditAction.SELF_HEALING_DEPLOY,
                             AuditEvent.Severity.WARN, AuditEvent.TargetType.SERVICE,
                             image.getServiceName(), image.getProject().getId(), ownerOf(image),
-                            "Self-healing kicked in: restarted " + (desired - runningCount)
+                            "Self-healing kicked in: restarting " + (desired - runningCount)
                                     + " missing replica(s) (" + runningCount + "/" + desired + ")");
                 } catch (Exception e) {
                     log.error("[Self-Healing] Failed to reconcile service '{}' in project '{}': {}",
@@ -130,7 +145,7 @@ public class SelfHealingScheduler {
 
                 try {
                     long excess = runningCount - desired;
-                    deploymentService.scale(image, desired);
+                    deploymentService.scaleAsync(image.getId(), desired);
                     auditService.systemAction(COMPONENT, AuditEvent.AuditAction.EXCESS_SCALED_DOWN,
                             AuditEvent.Severity.INFO, AuditEvent.TargetType.SERVICE,
                             image.getServiceName(), image.getProject().getId(), ownerOf(image),
@@ -141,6 +156,45 @@ public class SelfHealingScheduler {
                             image.getProject().getName(),
                             e.getMessage(), e);
                 }
+            }
+        }
+    }
+
+    /**
+     * PENDING is a promise that a deploy thread is working on the replica. Two
+     * cases break that promise and would freeze the desired count forever,
+     * because PENDING counts as alive:
+     *   - rows created before this CP process started (the thread died with
+     *     the previous JVM)
+     *   - rows older than PENDING_TIMEOUT (every legitimate path has long
+     *     timed out)
+     * Both go to FAILED so healing can replace them.
+     */
+    private void failStalePendingInstances() {
+
+        List<ContainerInstance> pendings = containerInstanceRepository
+                .findAllByStatus(ContainerInstance.InstanceStatus.PENDING);
+
+        Instant timeoutCutoff = Instant.now().minus(PENDING_TIMEOUT);
+
+        for (ContainerInstance ci : pendings) {
+            Instant created = ci.getCreatedAt();
+            if (created == null) {
+                continue;
+            }
+
+            boolean orphanOfPreviousRun = created.isBefore(startupTime);
+            boolean timedOut = created.isBefore(timeoutCutoff);
+
+            if (orphanOfPreviousRun || timedOut) {
+                ci.setStatus(ContainerInstance.InstanceStatus.FAILED);
+                containerInstanceRepository.save(ci);
+
+                log.warn("[Self-Healing] Stale PENDING instance marked FAILED: instanceId={}, service={}, created={} ({})",
+                        ci.getId(),
+                        ci.getProjectImage().getServiceName(),
+                        created,
+                        orphanOfPreviousRun ? "predates CP startup" : "older than " + PENDING_TIMEOUT.toMinutes() + " min");
             }
         }
     }

@@ -50,18 +50,18 @@ public class OrchestrationService {
             throw new NoImagesConfiguredException(project.getName());
         }
 
-        log.info("Deploying project '{}': {} image(s) to deploy",
+        log.info("Deploying project '{}': {} image(s) queued",
                 project.getName(), images.size());
 
+        // fire-and-return: the API answers 202 immediately, containers appear
+        // as PENDING and the executor brings them to RUNNING
         for (ProjectImage image : images) {
-            deploymentService.deploy(image);
+            deploymentService.deployAsync(image.getId());
         }
-
-        log.info("Project '{}' deployment completed.", project.getName());
 
         auditService.userAction(caller, AuditEvent.AuditAction.PROJECT_DEPLOYED,
                 AuditEvent.TargetType.PROJECT, project.getName(), project,
-                "Deployed " + images.size() + " service(s)");
+                "Deployment of " + images.size() + " service(s) accepted");
     }
 
     public void undeployProject(Long projectId, BicloudUserDetails caller) {
@@ -207,7 +207,7 @@ public class OrchestrationService {
 
         // bring up the desired replica count with the new configuration
         if (updated.getDesiredReplicas() > 0) {
-            deploymentService.deploy(updated);
+            deploymentService.deployAsync(imageId);
         }
 
         log.info("ProjectImage '{}' (id={}) updated successfully.", image.getServiceName(), imageId);
@@ -227,12 +227,12 @@ public class OrchestrationService {
 
         int oldReplicas = image.getDesiredReplicas();
 
-        // persist the new desired state FIRST: if the worker calls below fail,
+        // persist the new desired state FIRST: if the worker calls fail,
         // self-healing converges to it instead of the stale count
         image.setDesiredReplicas(newReplicas);
         projectImageRepository.save(image);
 
-        deploymentService.scale(image, newReplicas);
+        deploymentService.scaleAsync(imageId, newReplicas);
 
         log.info("Service '{}' scaled to {} replicas.", image.getServiceName(), newReplicas);
 

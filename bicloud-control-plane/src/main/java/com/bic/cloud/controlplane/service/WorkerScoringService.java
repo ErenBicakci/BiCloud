@@ -25,9 +25,10 @@ import java.util.UUID;
  *    and they all pile onto the same worker.
  *
  * 2. RESERVATIONS in the DB: the summed limits of RUNNING/PENDING containers
- *    assigned to the worker. Each assignment is visible instantly within the
- *    same transaction, so every replica pick accounts for the previous one
- *    (a simplified version of Kubernetes' request-based scheduling).
+ *    assigned to the worker. A PENDING row is committed before the worker call,
+ *    so every replica pick accounts for the previous one - including deploys
+ *    running concurrently on other threads (a simplified version of
+ *    Kubernetes' request-based scheduling).
  *
  * The score uses the pessimistic (max usage) of the two signals.
  */
@@ -131,10 +132,9 @@ public class WorkerScoringService {
     }
 
     /**
-     * Summed RUNNING/PENDING container limits per worker.
-     * When called inside the deploy transaction, assignments made moments ago
-     * kaydedilen instance'lar da (auto-flush) toplama dahil olur - yani her
-     * in the same transaction immediately lower the next pick's score.
+     * Summed RUNNING/PENDING container limits per worker. Deploys commit a
+     * PENDING row before calling the worker, so assignments made moments ago -
+     * on this thread or any other - immediately lower the next pick's score.
      */
     private Map<UUID, Reservation> loadReservations() {
         Map<UUID, Reservation> map = new HashMap<>();
