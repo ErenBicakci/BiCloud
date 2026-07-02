@@ -4,6 +4,11 @@
 spring.application.name=bicloud-worker
 server.port=8081
 
+# @Scheduled tasks share a SINGLE thread by default; slow Docker calls
+# (stats/list) would delay the heartbeat and get the worker falsely marked
+# OFFLINE by the control plane. A wider pool keeps the heartbeat running.
+spring.task.scheduling.pool.size=4
+
 docker.host=unix:///var/run/docker.sock
 worker.name=worker-1
 # If left blank, WorkerAddressResolver auto-detects it
