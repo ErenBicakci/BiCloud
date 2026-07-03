@@ -138,7 +138,10 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
             URI targetUri = buildLocalUri(local.get(), target, exchange);
             log.debug("[Mesh] local {} {} -> {}", exchange.getRequest().getMethod(), rawPath, targetUri);
             exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_REQUEST_URL_ATTR, targetUri);
-            return chain.filter(exchange);
+            // strip internal gateway headers before the request reaches the tenant
+            // container - the gateway key especially must never be visible upstream
+            // (it authorizes /gateway/register etc.)
+            return chain.filter(stripInternalHeaders(exchange));
         }
 
         // 2) arrived remotely but there is no local instance -> do NOT forward again (loop risk).
@@ -195,6 +198,22 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
         mutated.getAttributes().put(ServerWebExchangeUtils.GATEWAY_REQUEST_URL_ATTR, targetUri);
 
         return chain.filter(mutated);
+    }
+
+    /**
+     * Removes gateway-internal headers so they never reach the tenant container.
+     * Covers both the ones this gateway stamps on hops and any a tenant might try
+     * to spoof on an outbound request. The gateway key is the critical one - it
+     * authorizes the gateway management API.
+     */
+    private ServerWebExchange stripInternalHeaders(ServerWebExchange exchange) {
+        return exchange.mutate()
+                .request(r -> r.headers(h -> {
+                    h.remove(GATEWAY_KEY_HEADER);
+                    h.remove(CALLER_PROJECT_HEADER);
+                    h.remove(HOPS_HEADER);
+                }))
+                .build();
     }
 
     /** For a local instance: strip the mesh prefix, the remaining sub-path goes to the container. */
