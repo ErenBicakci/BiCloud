@@ -270,8 +270,13 @@ export default function ServiceDetailPage() {
           />
           <EndpointRow
             label="External (Gateway)"
-            url={`http://${service.serviceName}.${project.name}.bicloud.local:9000`}
-            hint="Host-based, load-balanced access via edge gateway (DNS/hosts entry required on client)"
+            url={service.exposeExternally
+              ? `http://${service.serviceName}.${project.name}.bicloud.local:9000`
+              : 'External access disabled'}
+            disabled={!service.exposeExternally}
+            hint={service.exposeExternally
+              ? 'Host-based, load-balanced access via edge gateway (DNS/hosts entry required on client)'
+              : 'Only internal mesh traffic is accepted for this service.'}
           />
         </Card>
 
@@ -283,6 +288,9 @@ export default function ServiceDetailPage() {
           <KvRow icon={Globe} label="Internet"
                  value={service.allowInternet ? 'Allowed (admin-granted)' : 'Isolated (no egress)'}
                  valueColor={service.allowInternet ? 'var(--accent-yellow)' : 'var(--accent-green)'} />
+          <KvRow icon={Network} label="External Access"
+                 value={service.exposeExternally ? 'Exposed through gateway' : 'Internal mesh only'}
+                 valueColor={service.exposeExternally ? 'var(--accent-yellow)' : 'var(--accent-green)'} />
           <KvRow icon={Activity} label="Health"
                  value={isHealthy ? 'Healthy' : (isPartial ? 'Partial' : (isStopped ? 'Stopped' : 'Degraded'))}
                  valueColor={isHealthy ? 'var(--accent-green)' : (isPartial ? 'var(--accent-yellow)' : 'var(--accent-red)')} />
@@ -419,9 +427,10 @@ const SectionTitle = ({ icon: Icon, children, noMargin }) => (
   </div>
 );
 
-const EndpointRow = ({ label, url, hint }) => {
+const EndpointRow = ({ label, url, hint, disabled = false }) => {
   const [copied, setCopied] = useState(false);
   const handleCopy = () => {
+    if (disabled) return;
     navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
@@ -434,10 +443,16 @@ const EndpointRow = ({ label, url, hint }) => {
         padding: '8px 10px', background: 'var(--bg-elevated)',
         border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)'
       }}>
-        <code className="mono" style={{ flex: 1, fontSize: '0.78rem', color: 'var(--accent-cyan)' }}>{url}</code>
-        <button onClick={handleCopy} style={iconBtnStyle} title="Copy">
-          {copied ? <Check size={14} color="var(--accent-green)" /> : <Copy size={14} />}
-        </button>
+        <code className="mono" style={{
+          flex: 1,
+          fontSize: '0.78rem',
+          color: disabled ? 'var(--text-muted)' : 'var(--accent-cyan)'
+        }}>{url}</code>
+        {!disabled && (
+          <button onClick={handleCopy} style={iconBtnStyle} title="Copy">
+            {copied ? <Check size={14} color="var(--accent-green)" /> : <Copy size={14} />}
+          </button>
+        )}
       </div>
       {hint && <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 4 }}>{hint}</div>}
     </div>

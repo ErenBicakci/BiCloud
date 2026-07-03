@@ -6,7 +6,7 @@ import { extractError } from '../../../utils/common';
 import { Modal } from '../../../components/ui/Modal';
 import { Button, Input } from '../../../components/ui';
 import { EnvVarsEditor } from './EnvVarsEditor';
-import { Globe } from 'lucide-react';
+import { Globe, Network } from 'lucide-react';
 
 export const AddImageModal = ({ projectId, isOpen, onClose, onSuccess }) => {
   const { success } = useToast();
@@ -25,6 +25,7 @@ export const AddImageModal = ({ projectId, isOpen, onClose, onSuccess }) => {
   });
   const [envVars, setEnvVars] = useState([]);
   const [allowInternet, setAllowInternet] = useState(false);
+  const [exposeExternally, setExposeExternally] = useState(false);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -67,6 +68,7 @@ export const AddImageModal = ({ projectId, isOpen, onClose, onSuccess }) => {
         cpuLimit: parseFloat(form.cpuLimit),
         environmentVariables: envMap,
         allowInternet: isAdmin ? allowInternet : false,
+        exposeExternally,
       });
       success('Service added successfully.');
       onSuccess();
@@ -117,6 +119,27 @@ export const AddImageModal = ({ projectId, isOpen, onClose, onSuccess }) => {
         </div>
 
         <EnvVarsEditor ref={envEditorRef} envVars={envVars} setEnvVars={setEnvVars} />
+
+        <label style={{
+          display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer',
+          padding: '10px 12px', borderRadius: 'var(--radius-sm)',
+          background: 'rgba(63,185,80,.06)', border: '1px solid rgba(63,185,80,.24)',
+          fontSize: '0.8rem', color: 'var(--text-secondary)',
+        }}>
+          <input
+            type="checkbox"
+            checked={exposeExternally}
+            onChange={e => setExposeExternally(e.target.checked)}
+            style={{ marginTop: 2 }}
+          />
+          <span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600, color: 'var(--text-primary)' }}>
+              <Network size={13} /> Expose through gateway
+            </span>
+            <br />
+            Allows host-based access from outside the mesh. Internal mesh access remains available when disabled.
+          </span>
+        </label>
 
         {isAdmin && (
           <label style={{

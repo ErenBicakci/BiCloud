@@ -6,7 +6,7 @@ import { extractError } from '../../../utils/common';
 import { Modal } from '../../../components/ui/Modal';
 import { Button, Input } from '../../../components/ui';
 import { EnvVarsEditor } from './EnvVarsEditor';
-import { AlertTriangle, Globe } from 'lucide-react';
+import { AlertTriangle, Globe, Network } from 'lucide-react';
 
 /**
  * Edits the configuration of an existing service.
@@ -34,6 +34,7 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
     cpuLimit: String(service.cpuLimit ?? 0.5),
   });
   const [allowInternet, setAllowInternet] = useState(service.allowInternet ?? false);
+  const [exposeExternally, setExposeExternally] = useState(service.exposeExternally ?? false);
   const [envVars, setEnvVars] = useState(
     () => Object.entries(service.environmentVariables || {}).map(([key, value]) => ({ key, value }))
   );
@@ -70,6 +71,7 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
         environmentVariables: envMap,
         // non-admins must echo the current value: changing it is admin-only server-side
         allowInternet: isAdmin ? allowInternet : (service.allowInternet ?? false),
+        exposeExternally,
       });
       success('Service updated. Containers are being recreated with the new configuration.');
       onSuccess();
@@ -123,6 +125,27 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
         </div>
 
         <EnvVarsEditor ref={envEditorRef} envVars={envVars} setEnvVars={setEnvVars} />
+
+        <label style={{
+          display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer',
+          padding: '10px 12px', borderRadius: 'var(--radius-sm)',
+          background: 'rgba(63,185,80,.06)', border: '1px solid rgba(63,185,80,.24)',
+          fontSize: '0.8rem', color: 'var(--text-secondary)',
+        }}>
+          <input
+            type="checkbox"
+            checked={exposeExternally}
+            onChange={e => setExposeExternally(e.target.checked)}
+            style={{ marginTop: 2 }}
+          />
+          <span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600, color: 'var(--text-primary)' }}>
+              <Network size={13} /> Expose through gateway
+            </span>
+            <br />
+            Allows host-based access from outside the mesh. Internal mesh access remains available when disabled.
+          </span>
+        </label>
 
         {isAdmin && (
           <label style={{

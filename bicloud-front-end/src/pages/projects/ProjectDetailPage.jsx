@@ -28,6 +28,7 @@ import {
   AlertTriangle,
   PenLine,
   History,
+  Network,
 } from 'lucide-react';
 
 export default function ProjectDetailPage() {
@@ -302,6 +303,11 @@ const ServicesTab = ({ projectId, images, onScale, onEdit, onDelete }) => {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
                 <span style={{ fontWeight: 700 }}>{img.serviceName}</span>
+                <Badge variant={img.exposeExternally ? 'blue' : 'gray'}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <Network size={11} /> {img.exposeExternally ? 'External' : 'Mesh only'}
+                  </span>
+                </Badge>
                 {inCooldown && (
                   <Badge variant="red">
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
