@@ -7,8 +7,8 @@ import com.bic.cloud.controlplane.exception.WorkerNotFoundException;
 import com.bic.cloud.controlplane.model.WorkerNode;
 import com.bic.cloud.controlplane.model.WorkerState;
 import com.bic.cloud.controlplane.repository.WorkerStateRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatusCode;
@@ -19,11 +19,23 @@ import java.util.Map;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class WorkerHttpClient {
 
+    /** Short read timeout - stop/remove/logs must fail fast. */
     private final RestClient restClient;
+
+    /** Long read timeout - create may wait behind a cold image pull. */
+    private final RestClient deployRestClient;
+
     private final WorkerStateRepository stateRepository;
+
+    public WorkerHttpClient(RestClient restClient,
+                            @Qualifier("deployRestClient") RestClient deployRestClient,
+                            WorkerStateRepository stateRepository) {
+        this.restClient = restClient;
+        this.deployRestClient = deployRestClient;
+        this.stateRepository = stateRepository;
+    }
 
     @Value("${bicloud.api-key}")
     private String apiKey;
@@ -36,7 +48,7 @@ public class WorkerHttpClient {
         String workerUrl = resolveWorkerUrl(targetWorker);
 
         try {
-            WorkerContainerCreateResponse response = restClient.post()
+            WorkerContainerCreateResponse response = deployRestClient.post()
                     .uri(workerUrl + "/api/containers/create")
                     .header(API_KEY_HEADER, apiKey)
                     .body(dto)
