@@ -17,8 +17,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Component
@@ -39,8 +40,25 @@ public class RateLimitFilter extends OncePerRequestFilter {
     @Value("${rate.limit.api.refill-seconds:60}")
     private int apiRefillSeconds;
 
-    private final Map<String, Bucket> gatewayBuckets = new ConcurrentHashMap<>();
-    private final Map<String, Bucket> apiBuckets     = new ConcurrentHashMap<>();
+    /** Cap per map: past this the least-recently-used bucket is evicted. */
+    private static final int MAX_TRACKED_KEYS = 10_000;
+
+    private final Map<String, Bucket> gatewayBuckets = createLruBucketMap();
+    private final Map<String, Bucket> apiBuckets     = createLruBucketMap();
+
+    /**
+     * Bounded LRU: without eviction every distinct IP/user leaves a permanent
+     * Bucket entry behind - a slow memory leak. An evicted key simply starts
+     * over with a fresh (full) bucket, which is acceptable for rate limiting.
+     */
+    private static Map<String, Bucket> createLruBucketMap() {
+        return Collections.synchronizedMap(new LinkedHashMap<>(256, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, Bucket> eldest) {
+                return size() > MAX_TRACKED_KEYS;
+            }
+        });
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
