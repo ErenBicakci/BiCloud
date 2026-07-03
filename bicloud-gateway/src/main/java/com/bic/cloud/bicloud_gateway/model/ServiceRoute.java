@@ -55,7 +55,8 @@ public class ServiceRoute {
         if (snapshot.isEmpty()) {
             return null;
         }
-        int idx = Math.abs(roundRobinCounter.getAndIncrement() % snapshot.size());
+        // floorMod: Math.abs would break on Integer.MIN_VALUE when the counter wraps
+        int idx = Math.floorMod(roundRobinCounter.getAndIncrement(), snapshot.size());
         return snapshot.get(idx);
     }
 
