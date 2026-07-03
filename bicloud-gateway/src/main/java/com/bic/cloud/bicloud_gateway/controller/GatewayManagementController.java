@@ -36,21 +36,23 @@ public class GatewayManagementController {
                 request.getServiceName(),
                 request.getInstanceIp(),
                 request.getPort(),
-                request.getInstanceId()
+                request.getInstanceId(),
+                request.isExposeExternally()
         );
 
         String routeHost = request.getServiceName() + "."
                 + request.getProjectName() + ".bicloud.local";
 
-        log.info("Register | route={} | target={}:{}",
-                routeHost, request.getInstanceIp(), request.getPort());
+        log.info("Register | route={} | target={}:{} | external={}",
+                routeHost, request.getInstanceIp(), request.getPort(), request.isExposeExternally());
 
         return Mono.just(ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(Map.of(
                         "status",  "registered",
                         "route",   routeHost,
-                        "target",  request.getInstanceIp() + ":" + request.getPort()
+                        "target",  request.getInstanceIp() + ":" + request.getPort(),
+                        "external", String.valueOf(request.isExposeExternally())
                 )));
     }
 

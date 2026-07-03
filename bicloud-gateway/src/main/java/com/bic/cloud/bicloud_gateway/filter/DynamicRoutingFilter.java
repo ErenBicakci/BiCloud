@@ -77,6 +77,12 @@ public class DynamicRoutingFilter implements GlobalFilter, Ordered {
             return forwardToRemoteGateway(exchange, chain, host);
         }
 
+        if (!registry.isExternallyExposed(host.project(), host.service())) {
+            log.warn("External route blocked by service policy -> 403 | route=[{}:{}]",
+                    host.project(), host.service());
+            return writeServiceNotExposed(exchange, host);
+        }
+
         ServiceInstance instance = resolved.get();
         URI targetUri = buildTargetUri(instance, exchange.getRequest().getURI());
 
@@ -115,8 +121,15 @@ public class DynamicRoutingFilter implements GlobalFilter, Ordered {
         return discoveryClient.discover(host.project(), host.service())
                 .flatMap(endpoints -> {
                     List<MeshEndpointDto> usable = endpoints.stream()
+                            .filter(MeshEndpointDto::isExposeExternally)
                             .filter(e -> e.getWorkerIp() != null && !e.getWorkerIp().isBlank())
                             .toList();
+
+                    if (!endpoints.isEmpty() && usable.isEmpty()) {
+                        log.warn("External route blocked by remote service policy -> 403 | route=[{}:{}]",
+                                host.project(), host.service());
+                        return writeServiceNotExposed(exchange, host);
+                    }
 
                     if (usable.isEmpty()) {
                         log.warn("No instance found (CP included) -> 503 | route=[{}:{}]",
@@ -200,6 +213,12 @@ public class DynamicRoutingFilter implements GlobalFilter, Ordered {
         DataBuffer buf = exchange.getResponse().bufferFactory()
                 .wrap(json.getBytes(StandardCharsets.UTF_8));
         return exchange.getResponse().writeWith(Mono.just(buf));
+    }
+
+    private Mono<Void> writeServiceNotExposed(ServerWebExchange exchange, ParsedHost host) {
+        return writeError(exchange, HttpStatus.FORBIDDEN, "SERVICE_NOT_EXPOSED",
+                "Service '%s' in project '%s' is not exposed through the external gateway."
+                        .formatted(host.service(), host.project()));
     }
 
 

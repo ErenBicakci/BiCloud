@@ -45,6 +45,13 @@ public class ServiceRoute {
     private Instant updatedAt = Instant.now();
 
     /**
+     * Service-level ingress policy. Internal mesh traffic is handled by a
+     * separate filter and does not depend on this flag.
+     */
+    @Builder.Default
+    private boolean exposeExternally = false;
+
+    /**
      * Returns the next instance using round-robin.
      * Returns {@code null} when all instances have been removed.
      *

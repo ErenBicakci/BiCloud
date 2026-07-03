@@ -80,7 +80,8 @@ public class GatewayNotificationService {
                             "serviceName", serviceName,
                             "instanceIp",  containerIp,
                             "port",        containerPort,
-                            "instanceId",  instance.getId().toString()
+                            "instanceId",  instance.getId().toString(),
+                            "exposeExternally", instance.getProjectImage().isExposeExternally()
                     ))
                     .retrieve()
                     .toBodilessEntity();

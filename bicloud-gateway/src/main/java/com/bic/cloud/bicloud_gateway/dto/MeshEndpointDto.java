@@ -16,4 +16,5 @@ public class MeshEndpointDto {
     private String workerIp;
     private int workerPort;
     private UUID workerId;
+    private boolean exposeExternally;
 }

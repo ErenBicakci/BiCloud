@@ -27,7 +27,7 @@ public class RouteRegistry {
 
 
     public void register(String projectName, String serviceName,
-                         String ip, int port, String instanceId) {
+                         String ip, int port, String instanceId, boolean exposeExternally) {
 
         String key = ServiceRoute.buildKey(projectName, serviceName);
         boolean isFirstInstanceForProject = !hasAnyInstanceForProject(projectName);
@@ -42,11 +42,15 @@ public class RouteRegistry {
         });
 
         synchronized (route) {
+            route.setExposeExternally(exposeExternally);
+            route.setUpdatedAt(java.time.Instant.now());
+
             boolean alreadyExists = route.getInstances().stream()
                     .anyMatch(i -> i.isSameEndpoint(ip, port));
 
             if (alreadyExists) {
-                log.debug("[{}] Instance already registered, skipped: {}:{}", key, ip, port);
+                log.debug("[{}] Instance already registered, policy refreshed: {}:{} | external={}",
+                        key, ip, port, exposeExternally);
                 return;
             }
 
@@ -58,8 +62,8 @@ public class RouteRegistry {
                             .build()
             );
 
-            log.info("[{}] Instance added -> {}:{} | Total: {}",
-                    key, ip, port, route.getInstances().size());
+            log.info("[{}] Instance added -> {}:{} | Total: {} | external={}",
+                    key, ip, port, route.getInstances().size(), exposeExternally);
         }
 
         // if this is the first instance -> connect the gateway to that project's network
@@ -110,6 +114,12 @@ public class RouteRegistry {
         ServiceRoute route = routes.get(key);
         if (route == null) return Optional.empty();
         return Optional.ofNullable(route.nextInstance());
+    }
+
+    public boolean isExternallyExposed(String projectName, String serviceName) {
+        String key = ServiceRoute.buildKey(projectName, serviceName);
+        ServiceRoute route = routes.get(key);
+        return route != null && route.isExposeExternally();
     }
 
     /**

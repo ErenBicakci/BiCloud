@@ -86,6 +86,15 @@ public class ProjectImage {
     @Builder.Default
     private boolean allowInternet = false;
 
+    /**
+     * Ingress exposure: when false the service remains reachable over the
+     * internal mesh, but host-based north-south gateway traffic is rejected.
+     * This is intentionally separate from allowInternet, which controls egress.
+     */
+    @Column(name = "expose_externally", nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private boolean exposeExternally = false;
+
     @PrePersist
     protected void onCreate() {
         this.createdAt = Instant.now();

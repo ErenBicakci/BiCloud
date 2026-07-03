@@ -27,4 +27,7 @@ public class ServiceEndpointDto {
 
     /** Which worker it runs on */
     private final UUID workerId;
+
+    /** Whether north-south gateway traffic is allowed for this service. */
+    private final boolean exposeExternally;
 }

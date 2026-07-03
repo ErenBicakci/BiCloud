@@ -47,4 +47,7 @@ public class UpdateProjectImageDto {
 
     /** Egress opt-in; only admins may change it (checked in the service layer). */
     private boolean allowInternet;
+
+    /** Ingress opt-in: whether this service accepts external host-based gateway traffic. */
+    private boolean exposeExternally;
 }

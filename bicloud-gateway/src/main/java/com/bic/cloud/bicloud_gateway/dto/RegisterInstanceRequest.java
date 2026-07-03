@@ -43,4 +43,7 @@ public class RegisterInstanceRequest {
 
     // ContainerInstance UUID on the CP (optional, for tracing)
     private String instanceId;
+
+    // Service-level ingress policy. false keeps mesh traffic working, but blocks external Host routing.
+    private boolean exposeExternally;
 }

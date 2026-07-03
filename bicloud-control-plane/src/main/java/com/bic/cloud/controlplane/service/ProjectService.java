@@ -132,6 +132,7 @@ public class ProjectService {
                     .consecutiveDeployFailures(img.getConsecutiveDeployFailures())
                     .lastDeployFailureAt(img.getLastDeployFailureAt())
                     .allowInternet(img.isAllowInternet())
+                    .exposeExternally(img.isExposeExternally())
                     .build());
         }
 

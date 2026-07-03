@@ -64,4 +64,7 @@ public class CreateProjectImageDto {
 
     /** Egress opt-in; only admins may set it to true (checked in the service layer). */
     private boolean allowInternet;
+
+    /** Ingress opt-in: whether this service accepts external host-based gateway traffic. */
+    private boolean exposeExternally;
 }

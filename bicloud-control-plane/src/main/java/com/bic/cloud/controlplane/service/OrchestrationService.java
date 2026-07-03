@@ -17,6 +17,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * Methods here mix DB writes with worker HTTP calls (stop, remove, create -
@@ -38,6 +40,7 @@ public class OrchestrationService {
     private final DeploymentService deploymentService;
     private final AuditService auditService;
     private final TransactionTemplate transactionTemplate;
+    private final GatewayNotificationService gatewayNotificationService;
 
     public void deployProject(Long projectId, BicloudUserDetails caller) {
 
@@ -169,6 +172,7 @@ public class OrchestrationService {
         ProjectImage image = projectImageService.findByIdWithProject(imageId);
         projectService.assertOwnerOrAdmin(image.getProject(), caller);
         boolean egressChanged = dto.isAllowInternet() != image.isAllowInternet();
+        boolean exposureChanged = dto.isExposeExternally() != image.isExposeExternally();
         if (egressChanged) {
             // changing the egress flag in either direction is admin-only
             ProjectImageService.assertCanSetAllowInternet(true, caller);
@@ -179,14 +183,18 @@ public class OrchestrationService {
 
         // config mutation is atomic; the entity must be managed while the
         // @ElementCollection map is mutated in place
+        boolean[] runtimeConfigChanged = new boolean[1];
+
         ProjectImage updated = transactionTemplate.execute(tx -> {
             ProjectImage managed = projectImageService.findByIdWithProject(imageId);
+            runtimeConfigChanged[0] = hasRuntimeConfigChanged(managed, dto);
 
             managed.setImageName(dto.getImageName());
             managed.setContainerPort(dto.getContainerPort());
             managed.setMemoryLimitMb(dto.getMemoryLimitMb());
             managed.setCpuLimit(dto.getCpuLimit());
             managed.setAllowInternet(dto.isAllowInternet());
+            managed.setExposeExternally(dto.isExposeExternally());
 
             // @ElementCollection: mutate the managed map in place, don't replace the reference
             if (managed.getEnvironmentVariables() == null) {
@@ -197,39 +205,65 @@ public class OrchestrationService {
                 managed.getEnvironmentVariables().putAll(dto.getEnvironmentVariables());
             }
 
-            // config changed; the old cooldown no longer means anything
-            managed.setConsecutiveDeployFailures(0);
-            managed.setLastDeployFailureAt(null);
-            // an update redeploys below, so the service is live again
-            managed.setStoppedByUser(false);
+            if (runtimeConfigChanged[0]) {
+                // runtime config changed; the old cooldown no longer means anything
+                managed.setConsecutiveDeployFailures(0);
+                managed.setLastDeployFailureAt(null);
+                // a runtime update redeploys below, so the service is live again
+                managed.setStoppedByUser(false);
+            }
             return projectImageRepository.save(managed);
         });
 
-        // stop containers running with the old configuration (HTTP, outside any transaction)
-        List<ContainerInstance> running = containerInstanceRepository
-                .findByProjectImageAndStatus(updated, ContainerInstance.InstanceStatus.RUNNING);
-        for (ContainerInstance instance : running) {
-            try {
-                deploymentService.stopAndRemove(instance);
-            } catch (Exception e) {
-                log.warn("Could not stop container {} while updating image: {}",
-                        instance.getDockerContainerId(), e.getMessage());
+        if (runtimeConfigChanged[0]) {
+            // stop containers running with the old configuration (HTTP, outside any transaction)
+            List<ContainerInstance> running = containerInstanceRepository
+                    .findByProjectImageAndStatus(updated, ContainerInstance.InstanceStatus.RUNNING);
+            for (ContainerInstance instance : running) {
+                try {
+                    deploymentService.stopAndRemove(instance);
+                } catch (Exception e) {
+                    log.warn("Could not stop container {} while updating image: {}",
+                            instance.getDockerContainerId(), e.getMessage());
+                }
             }
-        }
 
-        // bring up the desired replica count with the new configuration
-        if (updated.getDesiredReplicas() > 0) {
-            deploymentService.deployAsync(imageId);
+            // bring up the desired replica count with the new configuration
+            if (updated.getDesiredReplicas() > 0) {
+                deploymentService.deployAsync(imageId);
+            }
+        } else if (exposureChanged) {
+            // Ingress policy lives in the gateway registry; refresh it without container downtime.
+            gatewayNotificationService.resyncAll();
         }
 
         log.info("ProjectImage '{}' (id={}) updated successfully.", image.getServiceName(), imageId);
 
         auditService.userAction(caller, AuditEvent.AuditAction.SERVICE_UPDATED,
                 AuditEvent.TargetType.SERVICE, image.getServiceName(), image.getProject(),
-                "Service updated (image=" + image.getImageName() + "), containers recreated"
+                "Service updated (image=" + updated.getImageName() + ")"
+                        + (runtimeConfigChanged[0]
+                            ? ", containers recreated"
+                            : (exposureChanged ? ", gateway routes refreshed" : ", no runtime changes"))
                         + (egressChanged
                             ? " - internet egress " + (dto.isAllowInternet() ? "ENABLED" : "disabled") + " by admin"
+                            : "")
+                        + (exposureChanged
+                            ? " - external gateway exposure " + (dto.isExposeExternally() ? "ENABLED" : "disabled")
                             : ""));
+    }
+
+    private boolean hasRuntimeConfigChanged(ProjectImage image, UpdateProjectImageDto dto) {
+        return !Objects.equals(dto.getImageName(), image.getImageName())
+                || dto.getContainerPort() != image.getContainerPort()
+                || !Objects.equals(dto.getMemoryLimitMb(), image.getMemoryLimitMb())
+                || !Objects.equals(dto.getCpuLimit(), image.getCpuLimit())
+                || dto.isAllowInternet() != image.isAllowInternet()
+                || !normalizeEnv(dto.getEnvironmentVariables()).equals(normalizeEnv(image.getEnvironmentVariables()));
+    }
+
+    private Map<String, String> normalizeEnv(Map<String, String> env) {
+        return env == null ? Map.of() : env;
     }
 
     public void scale(Long imageId, int newReplicas, BicloudUserDetails caller) {

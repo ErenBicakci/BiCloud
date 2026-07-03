@@ -56,6 +56,7 @@ public class ServiceDiscoveryService {
                 .workerIp(state.getIpAddress())
                 .workerPort(ci.getWorkerNode().getServerPort())
                 .workerId(ci.getWorkerNode().getId())
+                .exposeExternally(ci.getProjectImage().isExposeExternally())
                 .build();
     }
 

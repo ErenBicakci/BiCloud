@@ -16,4 +16,5 @@ public class ProjectImageResponse {
     private Integer memoryLimitMb;
     private Double cpuLimit;
     private boolean allowInternet;
+    private boolean exposeExternally;
 }

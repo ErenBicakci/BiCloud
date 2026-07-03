@@ -65,6 +65,7 @@ public class ProjectImageService {
                 .environmentVariables(dto.getEnvironmentVariables())
                 .desiredReplicas(dto.getDesiredReplicas())
                 .allowInternet(dto.isAllowInternet())
+                .exposeExternally(dto.isExposeExternally())
                 .build();
 
         ProjectImage saved = projectImageRepository.save(projectImage);
@@ -74,7 +75,8 @@ public class ProjectImageService {
         auditService.userAction(caller, AuditEvent.AuditAction.SERVICE_CREATED,
                 AuditEvent.TargetType.SERVICE, saved.getServiceName(), project,
                 "Service added (image=" + saved.getImageName() + ", " + saved.getDesiredReplicas() + " replika)"
-                        + (saved.isAllowInternet() ? " - internet egress ENABLED by admin" : ""));
+                        + (saved.isAllowInternet() ? " - internet egress ENABLED by admin" : "")
+                        + (saved.isExposeExternally() ? " - external gateway exposure ENABLED" : ""));
 
         return ProjectImageResponse.builder()
                 .id(saved.getId())
@@ -86,6 +88,7 @@ public class ProjectImageService {
                 .memoryLimitMb(saved.getMemoryLimitMb())
                 .cpuLimit(saved.getCpuLimit())
                 .allowInternet(saved.isAllowInternet())
+                .exposeExternally(saved.isExposeExternally())
                 .build();
     }
 
