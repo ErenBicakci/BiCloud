@@ -19,7 +19,7 @@ public class CreateProjectImageDto {
     @Size(min = 2, max = 50,
           message = "Service name must be between 2 and 50 characters.")
     @Pattern(
-            regexp = "^(?!bicloud-)[a-z][a-z0-9-]{1,49}$",
+            regexp = "^(?!bicloud-)[a-z](?:[a-z0-9-]{0,48}[a-z0-9])$",
             message = "Service name may only contain lowercase letters, digits and hyphens (-); " +
                       "it must start with a letter, must not end with a hyphen " +
                       "and must not start with the reserved 'bicloud-' prefix."

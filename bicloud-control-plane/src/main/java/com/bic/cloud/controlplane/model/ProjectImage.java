@@ -7,7 +7,12 @@ import java.time.Instant;
 import java.util.Map;
 
 @Entity
-@Table(name = "project_images")
+// service name unique within its project: the gateway route key is
+// projectName:serviceName, duplicates would merge two services into one route
+@Table(name = "project_images",
+       uniqueConstraints = @UniqueConstraint(
+           name = "uq_service_per_project",
+           columnNames = {"project_id", "service_name"}))
 @Getter
 @Setter
 @Builder

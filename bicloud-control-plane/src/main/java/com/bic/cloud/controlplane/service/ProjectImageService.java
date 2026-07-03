@@ -3,6 +3,7 @@ package com.bic.cloud.controlplane.service;
 import com.bic.cloud.controlplane.dto.CreateProjectImageDto;
 import com.bic.cloud.controlplane.dto.ProjectImageResponse;
 import com.bic.cloud.controlplane.exception.ForbiddenException;
+import com.bic.cloud.controlplane.exception.NameConflictException;
 import com.bic.cloud.controlplane.exception.ProjectImageNotFoundException;
 import com.bic.cloud.controlplane.exception.ProjectNotFoundException;
 import com.bic.cloud.controlplane.model.AuditEvent;
@@ -47,6 +48,12 @@ public class ProjectImageService {
 
         projectService.assertOwnerOrAdmin(project, caller);
         assertCanSetAllowInternet(dto.isAllowInternet(), caller);
+
+        // route key is projectName:serviceName -> unique within the project.
+        // The DB constraint is the backstop; this check produces the friendly 409.
+        if (projectImageRepository.existsByProject_IdAndServiceName(project.getId(), dto.getServiceName())) {
+            throw NameConflictException.serviceName(dto.getServiceName());
+        }
 
         ProjectImage projectImage = ProjectImage.builder()
                 .project(project)

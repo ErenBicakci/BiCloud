@@ -4,6 +4,7 @@ import com.bic.cloud.controlplane.dto.CreateProjectDto;
 import com.bic.cloud.controlplane.dto.CreateProjectResponse;
 import com.bic.cloud.controlplane.dto.ProjectDetailResponse;
 import com.bic.cloud.controlplane.exception.ForbiddenException;
+import com.bic.cloud.controlplane.exception.NameConflictException;
 import com.bic.cloud.controlplane.exception.ProjectNotFoundException;
 import com.bic.cloud.controlplane.model.AuditEvent;
 import com.bic.cloud.controlplane.model.BicloudUser;
@@ -42,6 +43,13 @@ public class ProjectService {
 
         BicloudUser owner = userRepository.findById(caller.getId())
                 .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+
+        // globally unique - every isolation identity (network, route, mesh,
+        // discovery) derives from the name. The DB constraint is the backstop;
+        // this check produces the friendly 409.
+        if (userProjectRepository.existsByName(dto.getName())) {
+            throw NameConflictException.projectName(dto.getName());
+        }
 
         UserProject userProject = new UserProject();
         userProject.setName(dto.getName());

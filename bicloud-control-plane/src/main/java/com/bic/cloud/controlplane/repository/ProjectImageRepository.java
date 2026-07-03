@@ -22,6 +22,9 @@ public interface ProjectImageRepository extends JpaRepository<ProjectImage, Long
 
     List<ProjectImage> findByProject_Id(Long projectId);
 
+    /** Route key is projectName:serviceName -> a service name must be unique within its project. */
+    boolean existsByProject_IdAndServiceName(Long projectId, String serviceName);
+
     /**
      * Fully initialized load for callers running OUTSIDE a transaction /
      * request session (self-healing, async deploys): project, owner and the

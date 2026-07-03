@@ -86,6 +86,7 @@ public class GlobalExceptionHandler {
 
             case "USER_ALREADY_EXISTS",
                  "USER_HAS_PROJECTS",
+                 "NAME_CONFLICT",
                  "ILLEGAL_USER_OPERATION" -> HttpStatus.CONFLICT;
 
             default -> HttpStatus.BAD_REQUEST;

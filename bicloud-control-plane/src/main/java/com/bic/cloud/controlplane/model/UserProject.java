@@ -13,9 +13,13 @@ import java.time.Instant;
 @AllArgsConstructor
 @Table(
     name = "user_projects",
+    // GLOBALLY unique, not per owner: the Docker network, gateway route key,
+    // mesh path and service discovery all derive from the project name, so two
+    // owners sharing a name would share an isolation boundary (cross-tenant
+    // traffic). The name IS the tenant identity in the current design.
     uniqueConstraints = @UniqueConstraint(
-        name = "uq_project_name_owner",
-        columnNames = {"name", "owner_id"}
+        name = "uq_project_name",
+        columnNames = {"name"}
     )
 )
 public class UserProject {

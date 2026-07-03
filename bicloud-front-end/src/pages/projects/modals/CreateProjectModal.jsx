@@ -19,6 +19,7 @@ export const CreateProjectModal = ({ isOpen, onClose, onSuccess }) => {
     if (!/^[a-z][a-z0-9-]+$/.test(val)) return setError('Only lowercase letters, numbers, and hyphens (-) are allowed; must start with a lowercase letter.');
     if (val.endsWith('-')) return setError('Project name cannot end with a hyphen (-)');
     if (val.startsWith('bicloud-')) return setError('The "bicloud-" prefix is reserved by the system and cannot be used.');
+    if (val.startsWith('egress-')) return setError('The "egress-" prefix is reserved by the system and cannot be used.');
 
     setLoading(true);
     try {
@@ -43,7 +44,7 @@ export const CreateProjectModal = ({ isOpen, onClose, onSuccess }) => {
           placeholder="my-project"
           value={name}
           onChange={(e) => { setName(e.target.value.toLowerCase()); setError(''); }}
-          hint="2–50 chars; lowercase letters (a-z), numbers, and hyphens (-) only. 'bicloud-' prefix is not allowed."
+          hint="2–50 chars; lowercase letters (a-z), numbers, and hyphens (-) only. 'bicloud-' and 'egress-' prefixes are not allowed."
         />
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
           <Button variant="ghost" type="button" onClick={onClose}>Cancel</Button>
