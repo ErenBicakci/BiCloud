@@ -27,6 +27,8 @@ public class DockerContainerService {
     static final String LABEL_PROJECT = "bicloud.project";
     static final String LABEL_SERVICE = "bicloud.service";
     static final String LABEL_PORT    = "bicloud.port";
+    static final String LABEL_MANAGED = "bicloud.managed";
+    static final String LABEL_MANAGED_VALUE = "true";
 
     private final DockerClient         dockerClient;
     private final DockerNetworkService dockerNetworkService;
@@ -68,7 +70,7 @@ public class DockerContainerService {
                 .withExposedPorts(exposedPort)
                 .withEnv(envList)
                 .withLabels(Map.of(
-                        "bicloud.managed", "true",
+                        LABEL_MANAGED,     LABEL_MANAGED_VALUE,
                         LABEL_PROJECT,     req.getProjectName(),
                         LABEL_SERVICE,     req.getServiceName(),
                         LABEL_PORT,        String.valueOf(req.getContainerPort())
@@ -214,8 +216,17 @@ public class DockerContainerService {
         }
     }
 
-    public List<Container> listAllContainers() {
-        return dockerClient.listContainersCmd().withShowAll(true).exec();
+    public List<Container> listManagedContainers() {
+        return dockerClient.listContainersCmd()
+                .withShowAll(true)
+                .withLabelFilter(Map.of(LABEL_MANAGED, LABEL_MANAGED_VALUE))
+                .exec();
+    }
+
+    public List<Container> listManagedRunningContainers() {
+        return dockerClient.listContainersCmd()
+                .withLabelFilter(Map.of(LABEL_MANAGED, LABEL_MANAGED_VALUE))
+                .exec();
     }
 
 

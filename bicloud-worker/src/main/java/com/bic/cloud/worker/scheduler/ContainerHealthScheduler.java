@@ -32,7 +32,7 @@ public class ContainerHealthScheduler {
         }
 
         try {
-            List<Container> containers = dockerContainerService.listAllContainers();
+            List<Container> containers = dockerContainerService.listManagedContainers();
 
             for (Container container : containers) {
                 String containerId = container.getId();

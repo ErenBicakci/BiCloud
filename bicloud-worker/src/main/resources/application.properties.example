@@ -8,6 +8,8 @@ server.port=8081
 # (stats/list) would delay the heartbeat and get the worker falsely marked
 # OFFLINE by the control plane. A wider pool keeps the heartbeat running.
 spring.task.scheduling.pool.size=4
+worker.container-snapshot-interval-ms=15000
+worker.container-snapshot-initial-delay-ms=15000
 
 docker.host=unix:///var/run/docker.sock
 worker.name=worker-1
