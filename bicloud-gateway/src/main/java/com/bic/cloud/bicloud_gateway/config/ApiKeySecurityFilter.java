@@ -14,6 +14,7 @@ import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 
 @Component
@@ -36,7 +37,10 @@ public class ApiKeySecurityFilter implements WebFilter {
 
         String providedKey = exchange.getRequest().getHeaders().getFirst(API_KEY_HEADER);
 
-        if (validApiKey.equals(providedKey)) {
+        // constant-time comparison - String.equals leaks the match length via timing
+        if (providedKey != null && MessageDigest.isEqual(
+                providedKey.getBytes(StandardCharsets.UTF_8),
+                validApiKey.getBytes(StandardCharsets.UTF_8))) {
             return chain.filter(exchange);
         }
 

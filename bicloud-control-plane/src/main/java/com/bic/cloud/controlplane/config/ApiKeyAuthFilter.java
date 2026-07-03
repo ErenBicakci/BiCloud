@@ -11,6 +11,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 @Slf4j
 @Component
@@ -33,7 +35,10 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         if (path.startsWith("/api/workers")) {
             String providedKey = request.getHeader(API_KEY_HEADER);
 
-            if (providedKey == null || !providedKey.equals(apiKey)) {
+            // constant-time comparison - String.equals leaks the match length via timing
+            if (providedKey == null || !MessageDigest.isEqual(
+                    providedKey.getBytes(StandardCharsets.UTF_8),
+                    apiKey.getBytes(StandardCharsets.UTF_8))) {
                 log.warn("Unauthorized request to {} from IP: {}", path, request.getRemoteAddr());
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                 response.setContentType("application/json");
