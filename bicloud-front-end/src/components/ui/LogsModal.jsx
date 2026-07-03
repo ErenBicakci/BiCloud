@@ -3,103 +3,112 @@ import { Modal } from './Modal';
 import { Spinner } from './index';
 import { containerService } from '../../services/container.service';
 import { extractError } from '../../utils/common';
-import { Play, Pause } from 'lucide-react';
+import { Check, Copy, Pause, Play, RefreshCw, Terminal } from 'lucide-react';
 
 const TAIL_OPTIONS = [50, 100, 200, 500, 1000];
 const FOLLOW_INTERVAL_MS = 3000;
 
-/**
- * Shared container log modal.
- *
- * Features:
- *  - Tail selector (last N lines)
- *  - "Follow" mode: re-fetches every 3s and auto-scrolls to the bottom
- *
- * Used by both ServiceDetailPage and ProjectDetailPage.
- */
 export const LogsModal = ({ instance, onClose }) => {
-  // Don't mount while closed: state resets fresh on every open
   if (!instance) return null;
   return <LogsDialog instance={instance} onClose={onClose} />;
 };
 
 const LogsDialog = ({ instance, onClose }) => {
-  const [logs, setLogs]       = useState('');
-  const [loading, setLoading] = useState(true); // only for the initial load
-  const [tail, setTail]       = useState(200);
-  const [follow, setFollow]   = useState(false);
+  const [logs, setLogs] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [tail, setTail] = useState(200);
+  const [follow, setFollow] = useState(false);
+  const [copied, setCopied] = useState(false);
   const boxRef = useRef(null);
 
-  const fetchLogs = useCallback(() => {
+  const fetchLogs = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
     return containerService.logs(instance.id, tail)
-      .then(r => setLogs(r.data.logs || '(No logs)'))
+      .then(r => setLogs(r.data.logs || 'No logs returned.'))
       .catch(e => setLogs(`Error: ${extractError(e)}`))
       .finally(() => setLoading(false));
   }, [instance.id, tail]);
 
-  // Re-fetch on initial load and when tail changes
-  useEffect(() => { fetchLogs(); }, [fetchLogs]);
-
-  // Follow mode: periodic silent refresh
   useEffect(() => {
-    if (!follow) return;
-    const t = setInterval(fetchLogs, FOLLOW_INTERVAL_MS);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) fetchLogs();
+    });
+    return () => { cancelled = true; };
+  }, [fetchLogs]);
+
+  useEffect(() => {
+    if (!follow) return undefined;
+    const t = setInterval(() => fetchLogs(true), FOLLOW_INTERVAL_MS);
     return () => clearInterval(t);
   }, [follow, fetchLogs]);
 
-  // Scroll to bottom on every update when following
   useEffect(() => {
     if (follow && boxRef.current) {
       boxRef.current.scrollTop = boxRef.current.scrollHeight;
     }
   }, [logs, follow]);
 
-  const title = `Logs: ${instance.serviceName}` +
-    (instance.dockerContainerId ? ` • ${instance.dockerContainerId.substring(0, 12)}` : '');
+  const copyLogs = () => {
+    navigator.clipboard.writeText(logs);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1400);
+  };
+
+  const containerId = instance.dockerContainerId?.substring(0, 12);
+  const lines = loading ? [] : logs.split(/\r?\n/);
 
   return (
-    <Modal isOpen onClose={onClose} title={title} maxWidth={900}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Last N lines:</span>
-        <div style={{ display: 'flex', gap: 6 }}>
+    <Modal
+      isOpen
+      onClose={onClose}
+      maxWidth={960}
+      title={(
+        <span className="log-modal-title">
+          <Terminal size={17} color="var(--accent-blue)" />
+          <span>Logs / {instance.serviceName}</span>
+          {containerId && <span className="badge badge-gray mono">{containerId}</span>}
+        </span>
+      )}
+    >
+      <div className="log-toolbar">
+        <div className="segmented" aria-label="Tail lines">
           {TAIL_OPTIONS.map(n => (
             <button
               key={n}
+              className={tail === n ? 'active' : ''}
               onClick={() => setTail(n)}
-              style={{
-                padding: '3px 10px', borderRadius: 6, fontSize: '0.75rem', fontWeight: 600,
-                border: `1px solid ${tail === n ? 'var(--accent-blue)' : 'var(--border-subtle)'}`,
-                background: tail === n ? 'rgba(56,139,253,.15)' : 'transparent',
-                color: tail === n ? 'var(--accent-blue)' : 'var(--text-muted)',
-                cursor: 'pointer', transition: 'all .15s',
-              }}
-            >{n}</button>
+            >
+              {n}
+            </button>
           ))}
         </div>
 
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {loading && <Spinner />}
+          <button className="btn btn-ghost btn-sm" onClick={() => fetchLogs()} disabled={loading}>
+            <RefreshCw size={13} /> Refresh
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={copyLogs} disabled={loading}>
+            {copied ? <Check size={13} /> : <Copy size={13} />} Copy
+          </button>
           <button
+            className={`btn btn-sm ${follow ? 'btn-success' : 'btn-ghost'}`}
             onClick={() => setFollow(f => !f)}
-            title={follow ? 'Stop following' : 'Live follow: refresh every 3s and scroll to bottom'}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '4px 12px', borderRadius: 6, fontSize: '0.78rem', fontWeight: 600,
-              border: `1px solid ${follow ? 'var(--accent-green)' : 'var(--border-subtle)'}`,
-              background: follow ? 'rgba(63,185,80,.12)' : 'transparent',
-              color: follow ? 'var(--accent-green)' : 'var(--text-secondary)',
-              cursor: 'pointer', transition: 'all .15s',
-            }}
           >
-            {follow
-              ? <><span className="health-dot running" style={{ width: 7, height: 7 }} /> Following <Pause size={12} /></>
-              : <><Play size={12} /> Follow</> }
+            {follow ? <Pause size={13} /> : <Play size={13} />}
+            {follow ? 'Following' : 'Follow'}
           </button>
         </div>
       </div>
 
-      <div ref={boxRef} className="code-block" style={{ height: 480, fontSize: '0.75rem', overflowY: 'auto' }}>
-        {loading ? '' : logs}
+      <div ref={boxRef} className="log-viewer">
+        {loading ? null : lines.map((line, index) => (
+          <div className="log-line" key={`${index}-${line}`}>
+            <span className="log-line-no">{index + 1}</span>
+            <code>{line || ' '}</code>
+          </div>
+        ))}
       </div>
     </Modal>
   );

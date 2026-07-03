@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
 import { saveAuth as saveAuthUtil, clearAuth as clearAuthUtil, getToken, getUser as getStoredUser } from '../utils/auth';
 

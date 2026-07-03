@@ -33,7 +33,11 @@ export default function AdminUsersPage() {
 
   useEffect(() => {
     if (!isAdmin) return navigate('/');
-    loadUsers();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) loadUsers();
+    });
+    return () => { cancelled = true; };
   }, [isAdmin, loadUsers, navigate]);
 
   const handleRoleToggle = async (user) => {

@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { auditService } from '../../services/audit.service';
 import { useAuth } from '../../context/AuthContext';
 import { AuditTimeline } from '../../components/ui/AuditTimeline';
-import { Card } from '../../components/ui';
+import { Button } from '../../components/ui';
 import { History, RefreshCw } from 'lucide-react';
 
 const AUDIT_FILTERS = [
@@ -30,55 +30,44 @@ export default function AuditPage() {
   );
 
   return (
-    <div style={{ padding: '32px', maxWidth: 860 }}>
-      {/* Header */}
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
+    <div className="page">
+      <header className="page-header">
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-            <div style={{
-              padding: 8, borderRadius: 10,
-              background: 'rgba(56,139,253,.12)', border: '1px solid rgba(56,139,253,.25)',
-              color: 'var(--accent-blue)', display: 'flex',
-            }}>
-              <History size={18} />
-            </div>
-            <h1 style={{ fontSize: '1.5rem', fontWeight: 800 }}>Activity</h1>
-          </div>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+          <div className="page-kicker"><History size={14} /> Audit Trail</div>
+          <h1 className="page-title">Activity</h1>
+          <p className="page-subtitle">
             {isAdmin
               ? 'All user and automation events across the system.'
               : 'User actions and self-healing events in your projects.'}
           </p>
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={() => setReload(k => k + 1)}
-                style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <RefreshCw size={13} /> Refresh
-        </button>
+        <div className="page-actions">
+          <Button variant="ghost" icon={RefreshCw} onClick={() => setReload(k => k + 1)}>
+            Refresh
+          </Button>
+        </div>
       </header>
 
-      {/* Filter chips */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
-        {AUDIT_FILTERS.map(f => {
-          const active = filter === f.value;
-          return (
-            <button
-              key={f.value}
-              onClick={() => setFilter(f.value)}
-              style={{
-                padding: '5px 14px', borderRadius: 999, fontSize: '0.78rem', fontWeight: 600,
-                border: `1px solid ${active ? 'var(--accent-blue)' : 'var(--border-subtle)'}`,
-                background: active ? 'rgba(56,139,253,.15)' : 'transparent',
-                color: active ? 'var(--accent-blue)' : 'var(--text-secondary)',
-                cursor: 'pointer', transition: 'all .15s',
-              }}
-            >{f.label}</button>
-          );
-        })}
-      </div>
-
-      <Card>
+      <section className="page-surface">
+        <div className="panel-header">
+          <div>
+            <div className="panel-title"><History size={16} /> Event stream</div>
+            <div className="panel-subtitle">Filtered operational activity, newest first</div>
+          </div>
+          <div className="filter-pills">
+            {AUDIT_FILTERS.map(f => (
+              <button
+                key={f.value}
+                className={`filter-pill ${filter === f.value ? 'active' : ''}`}
+                onClick={() => setFilter(f.value)}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <AuditTimeline fetcher={fetcher} reloadKey={reloadKey} />
-      </Card>
+      </section>
     </div>
   );
 }

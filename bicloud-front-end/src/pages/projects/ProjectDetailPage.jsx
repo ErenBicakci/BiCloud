@@ -69,7 +69,13 @@ export default function ProjectDetailPage() {
     [id]
   );
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) loadData();
+    });
+    return () => { cancelled = true; };
+  }, [loadData]);
 
   const handleDeploy = async () => {
     setDeploying(true);
@@ -229,6 +235,7 @@ export default function ProjectDetailPage() {
       {/* Modals */}
       <AddImageModal 
         projectId={id} 
+        projectName={project.name}
         isOpen={isAddModalOpen} 
         onClose={() => setIsAddModalOpen(false)} 
         onSuccess={loadData}
@@ -275,7 +282,7 @@ const Tab = ({ active, onClick, children, icon: Icon }) => (
     borderBottom: `2px solid ${active ? 'var(--accent-blue)' : 'transparent'}`,
     transition: 'all 0.2s', marginBottom: -1
   }}>
-    <Icon size={18} /> {children}
+    {React.createElement(Icon, { size: 18 })} {children}
   </button>
 );
 

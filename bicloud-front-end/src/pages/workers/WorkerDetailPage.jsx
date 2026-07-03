@@ -18,6 +18,7 @@ export default function WorkerDetailPage() {
   const [worker, setWorker]     = useState(null);
   const [loading, setLoading]   = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -34,11 +35,20 @@ export default function WorkerDetailPage() {
     }
   }, [workerId, error, navigate]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) load();
+    });
+    return () => { cancelled = true; };
+  }, [load]);
 
   // Silent background refresh every 15s
   useEffect(() => {
-    const t = setInterval(() => load(true), 15000);
+    const t = setInterval(() => {
+      setNow(Date.now());
+      load(true);
+    }, 15000);
     return () => clearInterval(t);
   }, [load]);
 
@@ -50,6 +60,10 @@ export default function WorkerDetailPage() {
   const memPct   = worker.totalMemoryMb
     ? Math.round(((worker.usedMemoryMb ?? 0) / worker.totalMemoryMb) * 100)
     : 0;
+  const heartbeatAgeMs = worker.lastHeartbeat ? now - new Date(worker.lastHeartbeat).getTime() : null;
+  const heartbeatColor = !worker.lastHeartbeat
+    ? 'var(--text-muted)'
+    : (heartbeatAgeMs > 60000 ? 'var(--accent-red)' : 'var(--accent-green)');
 
   return (
     <div style={{ padding: '32px', maxWidth: 1100, margin: '0 auto' }}>
@@ -117,7 +131,7 @@ export default function WorkerDetailPage() {
           {isActive ? 'Worker active and sending heartbeats' : 'Worker inactive — no heartbeat received'}
           </div>
           <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 2 }}>
-            Last heartbeat: {formatRelative(worker.lastHeartbeat)}
+            Last heartbeat: {formatRelative(worker.lastHeartbeat, now)}
           </div>
         </div>
       </div>
@@ -159,9 +173,8 @@ export default function WorkerDetailPage() {
         <Card>
           <SectionTitle icon={Activity}>Meta</SectionTitle>
           <KvRow icon={Hash}     label="Version"         value={`v${worker.workerVersion}`} />
-          <KvRow icon={Clock}    label="Last Heartbeat"    value={formatRelative(worker.lastHeartbeat)}
-                 valueColor={!worker.lastHeartbeat ? 'var(--text-muted)' :
-                   ((Date.now() - new Date(worker.lastHeartbeat).getTime()) > 60000 ? 'var(--accent-red)' : 'var(--accent-green)')} />
+          <KvRow icon={Clock}    label="Last Heartbeat"    value={formatRelative(worker.lastHeartbeat, now)}
+                 valueColor={heartbeatColor} />
           <KvRow icon={Calendar} label="Registered"     value={formatDate(worker.createdAt)} />
         </Card>
       </div>
@@ -186,7 +199,7 @@ const linkSubtle = { color: 'var(--text-muted)', textDecoration: 'none' };
 
 const SectionTitle = ({ icon: Icon, children }) => (
   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem', fontWeight: 700, marginBottom: 14 }}>
-    {Icon && <Icon size={15} color="var(--text-secondary)" />} {children}
+    {Icon && React.createElement(Icon, { size: 15, color: 'var(--text-secondary)' })} {children}
   </div>
 );
 
@@ -196,7 +209,7 @@ const KvRow = ({ icon: Icon, label, value, valueColor, mono }) => (
     padding: '10px 0', borderBottom: '1px solid var(--border-subtle)',
   }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: '0.82rem' }}>
-      {Icon && <Icon size={13} />} {label}
+      {Icon && React.createElement(Icon, { size: 13 })} {label}
     </div>
     <div className={mono ? 'mono' : ''} style={{ fontSize: '0.85rem', fontWeight: 600, color: valueColor || 'var(--text-primary)' }}>
       {value}
@@ -210,7 +223,7 @@ const MetricCard = ({ icon: Icon, label, value, sub, pct, color }) => {
     <Card>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
         <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</span>
-        <Icon size={15} color="var(--text-muted)" />
+        {React.createElement(Icon, { size: 15, color: 'var(--text-muted)' })}
       </div>
       <div style={{ fontSize: '1.8rem', fontWeight: 800, lineHeight: 1, marginBottom: 6, color: barColor }}>{value}</div>
       <div style={{ height: 4, borderRadius: 2, background: 'var(--bg-elevated)', marginBottom: 6, overflow: 'hidden' }}>
@@ -225,7 +238,7 @@ const StatMini = ({ icon: Icon, label, value, accent }) => (
   <Card>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
       <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</span>
-      <Icon size={15} color="var(--text-muted)" />
+      {React.createElement(Icon, { size: 15, color: 'var(--text-muted)' })}
     </div>
     <div style={{ fontSize: '1.8rem', fontWeight: 800, lineHeight: 1, color: accent }}>{value}</div>
   </Card>
@@ -240,9 +253,9 @@ const HwStat = ({ label, value, unit }) => (
   </div>
 );
 
-function formatRelative(iso) {
+function formatRelative(iso, now) {
   if (!iso) return '—';
-  const diffSec = (Date.now() - new Date(iso).getTime()) / 1000;
+  const diffSec = (now - new Date(iso).getTime()) / 1000;
   if (diffSec < 60)    return `${Math.floor(diffSec)}s ago`;
   if (diffSec < 3600)  return `${Math.floor(diffSec / 60)}m ago`;
   if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;

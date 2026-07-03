@@ -1,23 +1,27 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/theme';
 import {
   LayoutDashboard,
   FolderKanban,
   LogOut,
-  Hexagon,
   ShieldCheck,
   Users,
   Server,
   Activity,
   History,
   ChevronRight,
+  Cloud,
+  Circle,
+  Moon,
+  Sun,
 } from 'lucide-react';
 
 const USER_NAV = [
-  { to: '/',         label: 'Overview',  icon: LayoutDashboard, exact: true },
-  { to: '/projects', label: 'Projects',  icon: FolderKanban },
-  { to: '/activity', label: 'Activity',  icon: History },
+  { to: '/',         label: 'Overview', icon: LayoutDashboard, exact: true },
+  { to: '/projects', label: 'Projects', icon: FolderKanban },
+  { to: '/activity', label: 'Activity', icon: History },
 ];
 
 const ADMIN_NAV = [
@@ -28,6 +32,7 @@ const ADMIN_NAV = [
 
 export const Sidebar = () => {
   const { user, logout, isAdmin } = useAuth();
+  const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
 
   const handleLogout = () => {
@@ -36,60 +41,31 @@ export const Sidebar = () => {
   };
 
   return (
-    <aside style={{
-      width: 'var(--sidebar-width)',
-      background: 'var(--bg-surface)',
-      borderRight: '1px solid var(--border-subtle)',
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100vh',
-      position: 'sticky',
-      top: 0,
-      flexShrink: 0,
-    }}>
-      {/* Brand */}
-      <div style={{
-        padding: '18px 16px',
-        borderBottom: '1px solid var(--border-subtle)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-      }}>
-        <div style={{
-          background: 'linear-gradient(135deg, rgba(56,139,253,.25), rgba(57,197,207,.15))',
-          border: '1px solid rgba(56,139,253,.35)',
-          borderRadius: 10,
-          padding: '7px',
-          color: 'var(--accent-blue)',
-          display: 'flex',
-          boxShadow: '0 0 16px rgba(56,139,253,.25)',
-        }}>
-          <Hexagon size={20} />
+    <aside className="shell-sidebar">
+      <div className="sidebar-brand">
+        <div className="brand-mark">
+          <Cloud size={19} />
         </div>
-        <div>
-          <div style={{ fontWeight: 800, fontSize: '.95rem', letterSpacing: '-.01em' }}>
-            <span className="gradient-text">BiCloud</span>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 800, fontSize: '.98rem', letterSpacing: 0 }}>
+            BiCloud
           </div>
-          <div style={{ fontSize: '.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.12em' }}>
-            {isAdmin ? 'Admin Console' : 'Portal'}
+          <div style={{ fontSize: '.66rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.12em', marginTop: 1 }}>
+            Cloud Console
           </div>
         </div>
       </div>
 
-      {/* Nav */}
-      <nav style={{ flex: 1, padding: '12px 8px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 0 }}>
-
-        {/* User Section */}
-        <NavSection label="My Services" />
+      <nav className="sidebar-nav">
+        <NavSection label="Workspace" />
         {USER_NAV.map(item => (
           <SidebarLink key={item.to} {...item} accentColor="var(--accent-blue)" />
         ))}
 
-        {/* Admin Section */}
         {isAdmin && (
           <>
             <div style={{ margin: '16px 0 4px' }}>
-              <NavSection label="Administration" accent />
+              <NavSection label="Operations" accent />
             </div>
             {ADMIN_NAV.map(item => (
               <SidebarLink key={item.to} {...item} accentColor="var(--accent-purple)" />
@@ -98,32 +74,36 @@ export const Sidebar = () => {
         )}
       </nav>
 
-      {/* User Profile Footer */}
-      <div style={{ padding: '10px 8px', borderTop: '1px solid var(--border-subtle)' }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          padding: '10px 12px',
-          borderRadius: 'var(--radius-md)',
-          background: 'rgba(255,255,255,0.02)',
-          border: '1px solid var(--border-subtle)',
-          cursor: 'pointer',
-          transition: 'all var(--transition)',
-        }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-subtle)'; e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; }}
-        >
-          <UserAvatar username={user?.username} isAdmin={isAdmin} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: '.85rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <div className="sidebar-footer">
+        <div className="theme-toggle" aria-label="Theme">
+          <button
+            type="button"
+            className={theme === 'light' ? 'active' : ''}
+            onClick={() => setTheme('light')}
+          >
+            <Sun size={13} /> Light
+          </button>
+          <button
+            type="button"
+            className={theme === 'dark' ? 'active' : ''}
+            onClick={() => setTheme('dark')}
+          >
+            <Moon size={13} /> Dark
+          </button>
+        </div>
+
+        <div className="account-card">
+          <UserAvatar username={user?.username} />
+          <div style={{ minWidth: 0 }}>
+            <div className="account-name">
               {user?.username}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+            <div className="account-meta">
               {isAdmin
                 ? <RoleBadge color="var(--accent-purple)" bg="rgba(163,113,247,.15)">Admin</RoleBadge>
                 : <RoleBadge color="var(--accent-blue)"   bg="rgba(56,139,253,.12)">User</RoleBadge>
               }
+              <span>{isAdmin ? 'Operations' : 'Workspace'}</span>
             </div>
           </div>
           <button
@@ -153,7 +133,7 @@ const NavSection = ({ label, accent = false }) => (
     alignItems: 'center',
     gap: 6,
   }}>
-    {accent && <ShieldCheck size={11} />}
+    {accent ? <ShieldCheck size={11} /> : <Circle size={7} />}
     {label}
   </div>
 );
@@ -173,15 +153,15 @@ const SidebarLink = ({ to, label, icon: Icon, exact, accentColor }) => (
       fontWeight: isActive ? 600 : 400,
       fontSize: '.875rem',
       marginBottom: 2,
-      background: isActive ? `linear-gradient(90deg, ${accentColor}1a 0%, transparent 100%)` : 'transparent',
+      background: isActive ? `${accentColor}18` : 'transparent',
       color: isActive ? accentColor : 'var(--text-secondary)',
-      boxShadow: isActive ? `inset 3px 0 0 ${accentColor}` : 'none',
+      border: `1px solid ${isActive ? `${accentColor}35` : 'transparent'}`,
       position: 'relative',
     })}
   >
     {({ isActive }) => (
       <>
-        <Icon size={16} style={{ flexShrink: 0 }} />
+        {React.createElement(Icon, { size: 16, style: { flexShrink: 0 } })}
         <span style={{ flex: 1 }}>{label}</span>
         {isActive && <ChevronRight size={12} style={{ opacity: 0.5 }} />}
       </>
@@ -189,21 +169,8 @@ const SidebarLink = ({ to, label, icon: Icon, exact, accentColor }) => (
   </NavLink>
 );
 
-const UserAvatar = ({ username, isAdmin }) => (
-  <div style={{
-    width: 30,
-    height: 30,
-    borderRadius: '50%',
-    background: isAdmin ? 'rgba(163,113,247,.2)' : 'rgba(56,139,253,.15)',
-    border: `1px solid ${isAdmin ? 'rgba(163,113,247,.3)' : 'rgba(56,139,253,.25)'}`,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '.75rem',
-    fontWeight: 700,
-    color: isAdmin ? 'var(--accent-purple)' : 'var(--accent-blue)',
-    flexShrink: 0,
-  }}>
+const UserAvatar = ({ username }) => (
+  <div className="account-avatar">
     {username?.[0]?.toUpperCase()}
   </div>
 );

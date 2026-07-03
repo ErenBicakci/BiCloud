@@ -4,7 +4,7 @@ import { projectService } from '../../services/project.service';
 import { containerService } from '../../services/container.service';
 import { extractError } from '../../utils/common';
 import { useToast } from '../../context/ToastContext';
-import { Card, Badge, Button, Spinner } from '../../components/ui';
+import { Badge, Button, Spinner } from '../../components/ui';
 import { Modal } from '../../components/ui/Modal';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { LogsModal } from '../../components/ui/LogsModal';
@@ -12,32 +12,31 @@ import { Sparkline } from '../../components/ui/Sparkline';
 import { ContainersPanel } from '../../components/ui/ContainersPanel';
 import { EditServiceModal } from './modals/EditServiceModal';
 import {
-  PenLine,
-  ChevronLeft,
-  Play,
-  Square,
-  RefreshCw,
-  Settings,
-  Terminal,
-  Trash2,
-  Copy,
-  Check,
-  Eye,
-  EyeOff,
   Activity,
   AlertTriangle,
   Box,
-  Cpu,
-  HardDrive,
-  Network,
-  Server,
-  Globe,
-  Tag,
   Calendar,
+  Check,
+  ChevronRight,
+  Copy,
+  Cpu,
+  Eye,
+  EyeOff,
+  Globe,
+  HardDrive,
   Layers,
-  Zap,
-  ShieldAlert,
+  Network,
+  PenLine,
+  Play,
+  RefreshCw,
   RotateCw,
+  Server,
+  Settings,
+  ShieldAlert,
+  Square,
+  Tag,
+  Trash2,
+  Zap,
 } from 'lucide-react';
 
 export default function ServiceDetailPage() {
@@ -45,19 +44,18 @@ export default function ServiceDetailPage() {
   const navigate = useNavigate();
   const { error, success } = useToast();
 
-  const [project, setProject]       = useState(null);
-  const [loading, setLoading]       = useState(true);
+  const [project, setProject] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
-  const [scaleOpen, setScaleOpen]   = useState(false);
-  const [editOpen, setEditOpen]     = useState(false);
-  const [confirmCfg, setConfirmCfg] = useState(null); // { title, message, confirmLabel, requireText?, action }
+  const [scaleOpen, setScaleOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [confirmCfg, setConfirmCfg] = useState(null);
   const [logsTarget, setLogsTarget] = useState(null);
-  const [reloadKey, setReloadKey]   = useState(0); // ContainersPanel'i refresh tetikleme
+  const [reloadKey, setReloadKey] = useState(0);
 
   const loadProject = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    else setRefreshing(true);
+    if (silent) setRefreshing(true);
+    else setLoading(true);
     try {
       const projRes = await projectService.get(projectId);
       setProject(projRes.data);
@@ -70,9 +68,14 @@ export default function ServiceDetailPage() {
     }
   }, [projectId, error, navigate]);
 
-  useEffect(() => { loadProject(); }, [loadProject]);
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) loadProject();
+    });
+    return () => { cancelled = true; };
+  }, [loadProject]);
 
-  // Auto-refresh every 5s while page is open (silently). Container panel handles its own refresh.
   useEffect(() => {
     const interval = setInterval(() => {
       loadProject(true);
@@ -91,15 +94,12 @@ export default function ServiceDetailPage() {
     return project.images.find(img => String(img.id) === String(serviceId));
   }, [project, serviceId]);
 
-  // ── Live metrics ───────────────────────────────────────────────────────────
-  // Workers send measurements every 20s; page fetches every 5s (reloadKey).
-  // Aggregated usage is accumulated on the client side for card sparklines.
   const serviceName = service?.serviceName;
   const [metrics, setMetrics] = useState([]);
   const [aggHistory, setAggHistory] = useState([]);
 
   useEffect(() => {
-    if (!serviceName) return;
+    if (!serviceName) return undefined;
     let cancelled = false;
     containerService.metrics(projectId, serviceName)
       .then(res => {
@@ -113,87 +113,74 @@ export default function ServiceDetailPage() {
           setAggHistory(prev => [...prev.slice(-59), { cpu, mem }]);
         }
       })
-      .catch(() => { /* if metrics unavailable, cards show "—" */ });
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [projectId, serviceName, reloadKey]);
-  // ─────────────────────────────────────────────────────────────────────────
 
   if (loading) return <div className="page-loader"><Spinner size="lg" /></div>;
   if (!service) {
     return (
-      <div style={{ padding: 32 }}>
+      <div className="service-shell">
         <p style={{ color: 'var(--text-muted)' }}>Service not found.</p>
-        <Link to={`/projects/${projectId}`}>← Back to project</Link>
+        <Link to={`/projects/${projectId}`}>Back to project</Link>
       </div>
     );
   }
 
-  // The "running" count in the top banner comes from the project summary (ImageSummary.runningReplicas).
   const runningCount = service.runningReplicas ?? 0;
-
-  const isHealthy   = runningCount === service.desiredReplicas && service.desiredReplicas > 0;
-  const isPartial   = runningCount > 0 && runningCount < service.desiredReplicas;
-  const isStopped   = runningCount === 0 && service.desiredReplicas === 0;
-
+  const isHealthy = runningCount === service.desiredReplicas && service.desiredReplicas > 0;
+  const isPartial = runningCount > 0 && runningCount < service.desiredReplicas;
+  const isStopped = runningCount === 0 && service.desiredReplicas === 0;
   const inCooldown = service.consecutiveDeployFailures >= 5 && service.lastDeployFailureAt;
 
-  // Live aggregate usage (from containers reporting metrics)
-  const liveMetrics   = metrics.filter(m => m.cpuPercent != null);
-  const hasMetrics    = liveMetrics.length > 0;
-  const totalCpu      = liveMetrics.reduce((s, m) => s + m.cpuPercent, 0);
-  const totalMem      = liveMetrics.reduce((s, m) => s + (m.memoryUsedMb || 0), 0);
-  const totalCpuLimit = (service.cpuLimit ?? 0) * Math.max(runningCount, 1) * 100; // in %
+  const liveMetrics = metrics.filter(m => m.cpuPercent != null);
+  const hasMetrics = liveMetrics.length > 0;
+  const totalCpu = liveMetrics.reduce((s, m) => s + m.cpuPercent, 0);
+  const totalMem = liveMetrics.reduce((s, m) => s + (m.memoryUsedMb || 0), 0);
+  const totalCpuLimit = (service.cpuLimit ?? 0) * Math.max(runningCount, 1) * 100;
   const totalMemLimit = (service.memoryLimitMb ?? 0) * Math.max(runningCount, 1);
 
   return (
-    <div style={{ padding: '32px', maxWidth: 1280, margin: '0 auto' }}>
-
-      {/* Breadcrumb */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 16 }}>
-        <Link to="/projects" style={linkSubtle}>Projeler</Link>
-        <ChevronLeft size={12} style={{ transform: 'rotate(180deg)' }} />
-        <Link to={`/projects/${projectId}`} style={linkSubtle}>{project.name}</Link>
-        <ChevronLeft size={12} style={{ transform: 'rotate(180deg)' }} />
+    <div className="service-shell">
+      <nav className="crumbs">
+        <Link to="/projects">Projects</Link>
+        <ChevronRight size={12} />
+        <Link to={`/projects/${projectId}`}>{project.name}</Link>
+        <ChevronRight size={12} />
         <span style={{ color: 'var(--text-primary)' }}>{service.serviceName}</span>
-      </div>
+      </nav>
 
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 6 }}>
-            <div style={{
-              width: 48, height: 48, borderRadius: 'var(--radius-md)',
-              background: 'linear-gradient(135deg, rgba(56,139,253,.15), rgba(163,113,247,.15))',
-              border: '1px solid var(--border-accent)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: 'var(--accent-blue)'
-            }}>
-              <Layers size={24} />
-            </div>
-            <div>
-              <h1 style={{ fontSize: '1.75rem', fontWeight: 800, lineHeight: 1.1 }}>{service.serviceName}</h1>
-              <div className="mono" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                {service.imageName}
-              </div>
+      <section className="hero-panel service-hero">
+        <div className="service-heading">
+          <div className="service-mark">
+            <Layers size={25} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div className="page-kicker" style={{ marginBottom: 5 }}>Service</div>
+            <h1 className="hero-title">{service.serviceName}</h1>
+            <div className="mono truncate" style={{ color: 'var(--text-muted)', fontSize: '.82rem', marginTop: 4 }}>
+              {service.imageName}
             </div>
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <div className="service-actions">
           {refreshing && <Spinner />}
           <Button variant="ghost" icon={RefreshCw} onClick={refreshAll} />
           <Button variant="ghost" icon={Settings} onClick={() => setScaleOpen(true)}>Scale</Button>
           <Button variant="ghost" icon={PenLine} onClick={() => setEditOpen(true)}>Edit</Button>
           <Button
-            variant="ghost" icon={Trash2}
+            variant="ghost"
+            icon={Trash2}
             style={{ color: 'var(--accent-red)' }}
             onClick={() => setConfirmCfg({
               title: 'Delete Service',
-              message: <>
-                <strong>{service.serviceName}</strong> service will be permanently deleted.
-                All running containers will be stopped and removed, and environment variable
-                definitions will also be deleted. This action cannot be undone.
-              </>,
+              message: (
+                <>
+                  <strong>{service.serviceName}</strong> service will be permanently deleted. All running
+                  containers and environment variable definitions will also be removed.
+                </>
+              ),
               confirmLabel: 'Delete Service',
               requireText: service.serviceName,
               action: async () => {
@@ -207,124 +194,158 @@ export default function ServiceDetailPage() {
                 }
               },
             })}
-          >Delete</Button>
+          >
+            Delete
+          </Button>
           {inCooldown && (
             <Button variant="warning" icon={RotateCw} onClick={async () => {
-              try { await projectService.resetFailures(service.id); success('Cooldown reset.'); refreshAll(); }
-              catch (e) { error(extractError(e)); }
-            }}>Reset Cooldown</Button>
+              try {
+                await projectService.resetFailures(service.id);
+                success('Cooldown reset.');
+                refreshAll();
+              } catch (e) {
+                error(extractError(e));
+              }
+            }}>
+              Reset Cooldown
+            </Button>
           )}
         </div>
-      </div>
+      </section>
 
-      {/* Status banner */}
-      <div style={{ marginBottom: 24 }}>
-        <StatusBanner
-          isHealthy={isHealthy}
-          isPartial={isPartial}
-          isStopped={isStopped}
-          inCooldown={inCooldown}
-          running={runningCount}
-          desired={service.desiredReplicas}
-          consecutiveFailures={service.consecutiveDeployFailures}
-          lastFailureAt={service.lastDeployFailureAt}
+      <StatusBanner
+        isHealthy={isHealthy}
+        isPartial={isPartial}
+        isStopped={isStopped}
+        inCooldown={inCooldown}
+        running={runningCount}
+        desired={service.desiredReplicas}
+        consecutiveFailures={service.consecutiveDeployFailures}
+        lastFailureAt={service.lastDeployFailureAt}
+      />
+
+      <section className="stat-grid" style={{ marginTop: 18 }}>
+        <StatCard
+          icon={Box}
+          label="Replicas"
+          value={`${runningCount}/${service.desiredReplicas}`}
+          hint={isHealthy ? 'All replicas running' : (isPartial ? 'Missing replicas' : (isStopped ? 'Service stopped' : 'Degraded state'))}
+          tone={isHealthy ? 'green' : (isPartial ? 'yellow' : 'red')}
         />
-      </div>
+        <StatCard
+          icon={Cpu}
+          label="CPU usage"
+          value={hasMetrics ? `${totalCpu.toFixed(1)}%` : '-'}
+          hint={hasMetrics ? `limit: ${service.cpuLimit ?? '-'} core x ${runningCount} replicas` : (runningCount > 0 ? 'Waiting for metrics' : 'No running containers')}
+          spark={<Sparkline data={aggHistory.map(p => p.cpu)} color="var(--accent-blue)" max={totalCpuLimit > 0 ? totalCpuLimit : undefined} />}
+        />
+        <StatCard
+          icon={HardDrive}
+          label="Memory usage"
+          value={hasMetrics ? `${totalMem} MB` : '-'}
+          hint={hasMetrics ? `limit: ${totalMemLimit} MB (${service.memoryLimitMb} MB x ${runningCount})` : (runningCount > 0 ? 'Waiting for metrics' : 'No running containers')}
+          tone={hasMetrics && totalMemLimit > 0 && totalMem / totalMemLimit > 0.85 ? 'red' : undefined}
+          spark={<Sparkline data={aggHistory.map(p => p.mem)} color="var(--accent-purple)" max={totalMemLimit > 0 ? totalMemLimit : undefined} />}
+        />
+        <StatCard icon={Network} label="Container port" value={service.containerPort} mono />
+      </section>
 
-      {/* Stats grid */}
-      <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-        gap: 14, marginBottom: 28
-      }}>
-        <StatCard icon={Box}      label="Replicas"      value={`${runningCount}/${service.desiredReplicas}`}
-                  hint={isHealthy ? 'All replicas running' : (isPartial ? 'Missing replicas' : (isStopped ? 'Service stopped' : 'Degraded state'))}
-                  hintColor={isHealthy ? 'var(--text-muted)' : (isPartial ? 'var(--accent-yellow)' : 'var(--accent-red)')} />
-        <StatCard icon={Cpu}      label="CPU Usage"
-                  value={hasMetrics ? `${totalCpu.toFixed(1)}%` : '—'}
-                  hint={hasMetrics
-                    ? `limit: ${service.cpuLimit ?? '—'} core × ${runningCount} replicas`
-                    : (runningCount > 0 ? 'Waiting for metrics (~20s)...' : 'No running containers')}
-                  spark={<Sparkline data={aggHistory.map(p => p.cpu)} color="var(--accent-blue)"
-                                    max={totalCpuLimit > 0 ? totalCpuLimit : undefined} />} />
-        <StatCard icon={HardDrive} label="Memory Usage"
-                  value={hasMetrics ? `${totalMem} MB` : '—'}
-                  hint={hasMetrics
-                    ? `limit: ${totalMemLimit} MB (${service.memoryLimitMb} MB × ${runningCount})`
-                    : (runningCount > 0 ? 'Waiting for metrics (~20s)...' : 'No running containers')}
-                  hintColor={hasMetrics && totalMemLimit > 0 && totalMem / totalMemLimit > 0.85 ? 'var(--accent-red)' : undefined}
-                  spark={<Sparkline data={aggHistory.map(p => p.mem)} color="var(--accent-purple, #a371f7)"
-                                    max={totalMemLimit > 0 ? totalMemLimit : undefined} />} />
-        <StatCard icon={Network}  label="Container Port" value={service.containerPort} mono />
-      </div>
+      <section className="service-grid">
+        <SectionCard title="Service access" icon={Globe} subtitle="How containers and external clients reach this service">
+          <div className="endpoint-list">
+            <EndpointRow
+              label="Inside project mesh"
+              badge="Always available"
+              description="Every deployed container receives this env automatically. Services in the same project call each other through the gateway mesh path."
+              lines={[
+                {
+                  label: 'Injected env',
+                  value: `BICLOUD_MESH_BASE=http://bicloud-gateway:9000/_bicloud/mesh/${project.name}`,
+                },
+                {
+                  label: 'Call pattern',
+                  value: `$BICLOUD_MESH_BASE/${service.serviceName}/<path>`,
+                },
+              ]}
+            />
+            <EndpointRow
+              label="Outside the mesh"
+              badge={service.exposeExternally ? 'Enabled' : 'Disabled'}
+              disabled={!service.exposeExternally}
+              description={service.exposeExternally
+                ? 'External clients must resolve this host to a BiCloud gateway. The gateway reads the Host header and load-balances to running instances.'
+                : 'External Host-based routing is blocked. Internal mesh traffic above still works.'}
+              lines={[
+                {
+                  label: 'Gateway host',
+                  value: service.exposeExternally
+                    ? `http://${service.serviceName}.${project.name}.bicloud.local:9000/<path>`
+                    : 'External access disabled',
+                },
+              ]}
+            />
+          </div>
+        </SectionCard>
 
-      {/* Two-column layout */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+        <SectionCard title="Runtime metadata" icon={Tag} subtitle="Identity, routing and health state">
+          <div className="kv-list">
+            <KvRow icon={Server} label="Service ID" value={`#${service.id}`} mono />
+            <KvRow icon={Calendar} label="Created" value={formatDate(service.createdAt)} />
+            <KvRow
+              icon={Globe}
+              label="Internet egress"
+              value={service.allowInternet ? 'Allowed by admin' : 'Isolated'}
+              valueColor={service.allowInternet ? 'var(--accent-yellow)' : 'var(--accent-green)'}
+            />
+            <KvRow
+              icon={Network}
+              label="External access"
+              value={service.exposeExternally ? 'Exposed through gateway' : 'Internal mesh only'}
+              valueColor={service.exposeExternally ? 'var(--accent-yellow)' : 'var(--accent-green)'}
+            />
+            <KvRow
+              icon={Activity}
+              label="Health"
+              value={isHealthy ? 'Healthy' : (isPartial ? 'Partial' : (isStopped ? 'Stopped' : 'Degraded'))}
+              valueColor={isHealthy ? 'var(--accent-green)' : (isPartial ? 'var(--accent-yellow)' : 'var(--accent-red)')}
+            />
+          </div>
+        </SectionCard>
+      </section>
 
-        {/* Endpoints panel */}
-        <Card>
-          <SectionTitle icon={Globe}>Service Addresses</SectionTitle>
-          <EndpointRow
-            label="Internal (Mesh)"
-            url={`http://bicloud-gateway:9000/_bicloud/mesh/${project.name}/${service.serviceName}`}
-            hint={`A single env is injected into each container: BICLOUD_MESH_BASE. To access this service: \${BICLOUD_MESH_BASE}/${service.serviceName}/<endpoint> — the same address works regardless of which machine the service runs on`}
-          />
-          <EndpointRow
-            label="External (Gateway)"
-            url={service.exposeExternally
-              ? `http://${service.serviceName}.${project.name}.bicloud.local:9000`
-              : 'External access disabled'}
-            disabled={!service.exposeExternally}
-            hint={service.exposeExternally
-              ? 'Host-based, load-balanced access via edge gateway (DNS/hosts entry required on client)'
-              : 'Only internal mesh traffic is accepted for this service.'}
-          />
-        </Card>
+      <EnvVarsSection envVars={service.environmentVariables || {}} />
 
-        {/* Tags / metadata */}
-        <Card>
-          <SectionTitle icon={Tag}>Meta</SectionTitle>
-          <KvRow icon={Server} label="Service ID" value={`#${service.id}`} mono />
-          <KvRow icon={Calendar} label="Created" value={formatDate(service.createdAt)} />
-          <KvRow icon={Globe} label="Internet"
-                 value={service.allowInternet ? 'Allowed (admin-granted)' : 'Isolated (no egress)'}
-                 valueColor={service.allowInternet ? 'var(--accent-yellow)' : 'var(--accent-green)'} />
-          <KvRow icon={Network} label="External Access"
-                 value={service.exposeExternally ? 'Exposed through gateway' : 'Internal mesh only'}
-                 valueColor={service.exposeExternally ? 'var(--accent-yellow)' : 'var(--accent-green)'} />
-          <KvRow icon={Activity} label="Health"
-                 value={isHealthy ? 'Healthy' : (isPartial ? 'Partial' : (isStopped ? 'Stopped' : 'Degraded'))}
-                 valueColor={isHealthy ? 'var(--accent-green)' : (isPartial ? 'var(--accent-yellow)' : 'var(--accent-red)')} />
-        </Card>
-      </div>
-
-      {/* Environment Variables */}
-      <Card style={{ marginBottom: 24 }}>
-        <EnvVarsSection envVars={service.environmentVariables || {}} />
-      </Card>
-
-      {/* Container Instances */}
       <ContainersPanel
         projectId={projectId}
         serviceName={service.serviceName}
         reloadKey={reloadKey}
         onLogs={setLogsTarget}
         onStop={async (id) => {
-          try { await containerService.stop(id); success('Container stopped.'); refreshAll(); }
-          catch (e) { error(extractError(e)); }
+          try {
+            await containerService.stop(id);
+            success('Container stopped.');
+            refreshAll();
+          } catch (e) {
+            error(extractError(e));
+          }
         }}
         onRemove={(id) => setConfirmCfg({
           title: 'Delete Container',
           message: 'This container will be stopped and removed. The target replica count of the service has not changed, so self-healing may create a new one.',
           confirmLabel: 'Delete',
           action: async () => {
-            try { await containerService.remove(id); success('Container deleted.'); refreshAll(); }
-            catch (e) { error(extractError(e)); }
+            try {
+              await containerService.remove(id);
+              success('Container deleted.');
+              refreshAll();
+            } catch (e) {
+              error(extractError(e));
+            }
             setConfirmCfg(null);
           },
         })}
       />
 
-      {/* Modals */}
       {scaleOpen && (
         <ScaleModal
           image={service}
@@ -354,120 +375,150 @@ export default function ServiceDetailPage() {
   );
 }
 
-const linkSubtle = { color: 'var(--text-muted)', textDecoration: 'none' };
-
 const StatusBanner = ({ isHealthy, isPartial, isStopped, inCooldown, running, desired, consecutiveFailures, lastFailureAt }) => {
-  let bg, border, color, icon, text, sub;
+  let color;
+  let icon;
+  let text;
+  let sub;
+
   if (inCooldown) {
-    bg = 'rgba(248,81,73,.08)'; border = 'rgba(248,81,73,.3)'; color = 'var(--accent-red)';
+    color = 'var(--accent-red)';
     icon = ShieldAlert;
-    text = `Self-healing disabled — ${consecutiveFailures} failed deploy attempts`;
-    sub  = `Last error: ${formatRelative(lastFailureAt)}. 5-minute cooldown active. Use "Reset Cooldown" to recover manually.`;
+    text = `Self-healing disabled - ${consecutiveFailures} failed deploy attempts`;
+    sub = `Last error: ${formatRelative(lastFailureAt)}. 5-minute cooldown active.`;
   } else if (isHealthy) {
-    bg = 'rgba(63,185,80,.08)'; border = 'rgba(63,185,80,.3)'; color = 'var(--accent-green)';
+    color = 'var(--accent-green)';
     icon = Activity;
-    text = 'Service healthy'; sub = `${running}/${desired} replicas running.`;
+    text = 'Service healthy';
+    sub = `${running}/${desired} replicas running.`;
   } else if (isPartial) {
-    bg = 'rgba(210,153,34,.08)'; border = 'rgba(210,153,34,.3)'; color = 'var(--accent-yellow)';
+    color = 'var(--accent-yellow)';
     icon = AlertTriangle;
-    text = 'Partially running'; sub = `${running}/${desired} replicas up. Self-healing is trying to restore the missing ones.`;
+    text = 'Partially running';
+    sub = `${running}/${desired} replicas up. Self-healing is trying to restore capacity.`;
   } else if (isStopped) {
-    bg = 'rgba(139,148,158,.06)'; border = 'rgba(139,148,158,.2)'; color = 'var(--text-muted)';
+    color = 'var(--text-muted)';
     icon = Square;
-    text = 'Service stopped'; sub = 'Replica count is 0. Scale up to start.';
+    text = 'Service stopped';
+    sub = 'Replica count is 0. Scale up to start.';
   } else {
-    bg = 'rgba(248,81,73,.08)'; border = 'rgba(248,81,73,.3)'; color = 'var(--accent-red)';
+    color = 'var(--accent-red)';
     icon = AlertTriangle;
-    text = 'Service not running'; sub = `${running}/${desired} replicas up.`;
+    text = 'Service not running';
+    sub = `${running}/${desired} replicas up.`;
   }
-  const Icon = icon;
+
   return (
-    <div style={{
-      background: bg, border: `1px solid ${border}`,
-      borderRadius: 'var(--radius-md)', padding: '14px 18px',
-      display: 'flex', alignItems: 'center', gap: 14
-    }}>
-      <Icon size={22} color={color} />
+    <div
+      className="status-banner"
+      style={{
+        '--status-color': color,
+        '--status-border': `color-mix(in srgb, ${color} 42%, transparent)`,
+        '--status-bg': `color-mix(in srgb, ${color} 10%, var(--bg-card))`,
+      }}
+    >
+      <div className="icon-box" style={{ color }}>
+        {React.createElement(icon, { size: 18 })}
+      </div>
       <div>
-        <div style={{ fontWeight: 600, color, fontSize: '0.9rem' }}>{text}</div>
-        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 2 }}>{sub}</div>
+        <div className="status-banner-title">{text}</div>
+        <div className="status-banner-sub">{sub}</div>
       </div>
     </div>
   );
 };
 
-const StatCard = ({ icon: Icon, label, value, hint, hintColor, mono, spark }) => (
-  <Card>
-    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
-      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-        {label}
-      </span>
-      <Icon size={16} color="var(--text-muted)" />
-    </div>
-    <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 8 }}>
-      <div className={mono ? 'mono' : ''} style={{ fontSize: '1.4rem', fontWeight: 700, lineHeight: 1.1 }}>
-        {value}
-      </div>
-      {spark && <div style={{ flexShrink: 0 }}>{spark}</div>}
-    </div>
-    {hint && (
-      <div style={{ fontSize: '0.7rem', color: hintColor || 'var(--text-muted)', marginTop: 4 }}>
-        {hint}
-      </div>
-    )}
-  </Card>
-);
+const StatCard = ({ icon: Icon, label, value, hint, tone, mono, spark }) => {
+  const color = tone === 'green'
+    ? 'var(--accent-green)'
+    : tone === 'yellow'
+      ? 'var(--accent-yellow)'
+      : tone === 'red'
+        ? 'var(--accent-red)'
+        : 'var(--text-muted)';
 
-const SectionTitle = ({ icon: Icon, children, noMargin }) => (
-  <div style={{
-    display: 'flex', alignItems: 'center', gap: 8,
-    fontSize: '0.95rem', fontWeight: 700, marginBottom: noMargin ? 0 : 14
-  }}>
-    {Icon && <Icon size={16} color="var(--text-secondary)" />} {children}
+  return (
+    <div className="stat-box">
+      <div className="stat-box-top">
+        <div className="stat-box-label">{label}</div>
+        <div className="icon-box" style={{ color }}>
+          {React.createElement(Icon, { size: 16 })}
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
+        <div className={`stat-box-value ${mono ? 'mono' : ''}`}>{value}</div>
+        {spark && <div style={{ flexShrink: 0 }}>{spark}</div>}
+      </div>
+      {hint && <div className="stat-box-hint" style={{ color: tone ? color : undefined }}>{hint}</div>}
+    </div>
+  );
+};
+
+const SectionCard = ({ title, subtitle, icon: Icon, children }) => (
+  <div className="section-card">
+    <div className="section-card-header">
+      <div>
+        <div className="section-card-title">
+          {Icon && React.createElement(Icon, { size: 16 })}
+          {title}
+        </div>
+        {subtitle && <div className="panel-subtitle">{subtitle}</div>}
+      </div>
+    </div>
+    <div className="section-card-body">
+      {children}
+    </div>
   </div>
 );
 
-const EndpointRow = ({ label, url, hint, disabled = false }) => {
+const EndpointRow = ({ label, badge, description, lines, disabled = false }) => (
+  <div className="endpoint-box">
+    <div className="endpoint-head">
+      <div className="kv-label">{label}</div>
+      <Badge variant={disabled ? 'gray' : 'blue'}>{badge}</Badge>
+      <div className="endpoint-hint">{description}</div>
+    </div>
+    <div className="endpoint-stack">
+      {lines.map(line => (
+        <CopyLine key={line.label} label={line.label} value={line.value} disabled={disabled} />
+      ))}
+    </div>
+  </div>
+);
+
+const CopyLine = ({ label, value, disabled }) => {
   const [copied, setCopied] = useState(false);
+  const canCopy = !disabled && value && !value.toLowerCase().includes('disabled');
+
   const handleCopy = () => {
-    if (disabled) return;
-    navigator.clipboard.writeText(url);
+    if (!canCopy) return;
+    navigator.clipboard.writeText(value);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
+
   return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '8px 10px', background: 'var(--bg-elevated)',
-        border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)'
-      }}>
-        <code className="mono" style={{
-          flex: 1,
-          fontSize: '0.78rem',
-          color: disabled ? 'var(--text-muted)' : 'var(--accent-cyan)'
-        }}>{url}</code>
-        {!disabled && (
-          <button onClick={handleCopy} style={iconBtnStyle} title="Copy">
+    <div>
+      <div className="kv-label" style={{ marginBottom: 4 }}>{label}</div>
+      <div className="endpoint-url">
+        <code className="mono" style={{ color: disabled ? 'var(--text-muted)' : undefined }}>{value}</code>
+        {canCopy && (
+          <button className="btn-icon" onClick={handleCopy} title="Copy">
             {copied ? <Check size={14} color="var(--accent-green)" /> : <Copy size={14} />}
           </button>
         )}
       </div>
-      {hint && <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 4 }}>{hint}</div>}
     </div>
   );
 };
 
 const KvRow = ({ icon: Icon, label, value, valueColor, mono }) => (
-  <div style={{
-    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-    padding: '10px 0', borderBottom: '1px solid var(--border-subtle)'
-  }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: '0.82rem' }}>
-      {Icon && <Icon size={14} />} {label}
+  <div className="kv-row">
+    <div className="kv-row-label">
+      {Icon && React.createElement(Icon, { size: 14 })}
+      {label}
     </div>
-    <div className={mono ? 'mono' : ''} style={{ fontSize: '0.85rem', fontWeight: 600, color: valueColor || 'var(--text-primary)' }}>
+    <div className={`kv-row-value ${mono ? 'mono' : ''}`} style={{ color: valueColor }}>
       {value}
     </div>
   </div>
@@ -485,23 +536,26 @@ const EnvVarsSection = ({ envVars }) => {
   };
 
   return (
-    <>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-        <SectionTitle icon={Zap} noMargin>
-          Environment Variables
-          <span style={{ marginLeft: 10, color: 'var(--text-muted)', fontWeight: 500, fontSize: '0.75rem' }}>
-            ({entries.length})
-          </span>
-        </SectionTitle>
+    <div className="section-card" style={{ marginTop: 18, marginBottom: 18 }}>
+      <div className="section-card-header">
+        <div>
+          <div className="section-card-title">
+            <Zap size={16} />
+            Environment variables
+            <Badge variant="gray">{entries.length}</Badge>
+          </div>
+          <div className="panel-subtitle">Service-level runtime configuration</div>
+        </div>
         {entries.length > 0 && (
           <Button size="sm" variant="ghost" icon={showValues ? EyeOff : Eye} onClick={() => setShowValues(!showValues)}>
             {showValues ? 'Hide' : 'Show'}
           </Button>
         )}
       </div>
+
       {entries.length === 0 ? (
-        <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
-          No environment variables defined for this service.
+        <div className="empty-state" style={{ padding: 34 }}>
+          <p>No environment variables defined for this service.</p>
         </div>
       ) : (
         <div className="table-wrap">
@@ -516,12 +570,12 @@ const EnvVarsSection = ({ envVars }) => {
             <tbody>
               {entries.map(([key, value]) => (
                 <tr key={key}>
-                  <td className="mono" style={{ color: 'var(--accent-cyan)', fontSize: '0.8rem' }}>{key}</td>
-                  <td className="mono" style={{ fontSize: '0.8rem', wordBreak: 'break-all' }}>
-                    {showValues ? value : '•'.repeat(Math.min(value?.length || 8, 24))}
+                  <td className="mono" style={{ color: 'var(--accent-cyan)', fontSize: '.8rem' }}>{key}</td>
+                  <td className="mono" style={{ fontSize: '.8rem', wordBreak: 'break-all' }}>
+                    {showValues ? value : '*'.repeat(Math.min(value?.length || 8, 24))}
                   </td>
                   <td style={{ textAlign: 'right' }}>
-                    <button onClick={() => handleCopy(key, value)} style={iconBtnStyle} title="Copy value">
+                    <button className="btn-icon" onClick={() => handleCopy(key, value)} title="Copy value">
                       {copiedKey === key ? <Check size={14} color="var(--accent-green)" /> : <Copy size={14} />}
                     </button>
                   </td>
@@ -531,16 +585,14 @@ const EnvVarsSection = ({ envVars }) => {
           </table>
         </div>
       )}
-    </>
+    </div>
   );
 };
-
-
 
 const ScaleModal = ({ image, onClose, onSuccess }) => {
   const { error, success } = useToast();
   const [replicas, setReplicas] = useState(image.desiredReplicas);
-  const [loading, setLoading]   = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const handleScale = async () => {
     setLoading(true);
@@ -549,19 +601,25 @@ const ScaleModal = ({ image, onClose, onSuccess }) => {
       success('Scaling successful.');
       onSuccess();
       onClose();
-    } catch (err) { error(extractError(err)); } finally { setLoading(false); }
+    } catch (err) {
+      error(extractError(err));
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <Modal isOpen onClose={onClose} title={`Scale Service: ${image.serviceName}`}>
-      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 18 }}>
-        Current: <strong>{image.runningReplicas}/{image.desiredReplicas}</strong> replicas.
-        Set the new target count.
+      <p style={{ fontSize: '.85rem', color: 'var(--text-muted)', marginBottom: 18 }}>
+        Current: <strong>{image.runningReplicas}/{image.desiredReplicas}</strong> replicas. Set the new target count.
       </p>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
         <input
-          type="range" min="0" max="10" value={replicas}
-          onChange={(e) => setReplicas(parseInt(e.target.value))}
+          type="range"
+          min="0"
+          max="10"
+          value={replicas}
+          onChange={(e) => setReplicas(parseInt(e.target.value, 10))}
           style={{ flex: 1 }}
         />
         <div style={{ fontSize: '1.6rem', fontWeight: 800, width: 50, textAlign: 'center' }}>{replicas}</div>
@@ -574,32 +632,27 @@ const ScaleModal = ({ image, onClose, onSuccess }) => {
   );
 };
 
-
-
-
-const iconBtnStyle = {
-  background: 'transparent', border: 'none', cursor: 'pointer',
-  color: 'var(--text-muted)', padding: 4, borderRadius: 4,
-  display: 'inline-flex', alignItems: 'center', transition: 'color .15s'
-};
-
 function formatDate(iso) {
-  if (!iso) return '—';
+  if (!iso) return '-';
   try {
     return new Date(iso).toLocaleString('en-US', {
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit'
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
     });
-  } catch { return iso; }
+  } catch {
+    return iso;
+  }
 }
 
 function formatRelative(iso) {
-  if (!iso) return '—';
+  if (!iso) return '-';
   const date = new Date(iso);
   const diffSec = (Date.now() - date.getTime()) / 1000;
-  if (diffSec < 60)     return `${Math.floor(diffSec)}s ago`;
-  if (diffSec < 3600)   return `${Math.floor(diffSec / 60)}m ago`;
-  if (diffSec < 86400)  return `${Math.floor(diffSec / 3600)}h ago`;
+  if (diffSec < 60) return `${Math.floor(diffSec)}s ago`;
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
   return `${Math.floor(diffSec / 86400)}d ago`;
 }
-

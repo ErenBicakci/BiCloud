@@ -1,17 +1,31 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import {
+  Activity,
+  ArrowRight,
+  Cloud,
+  Database,
+  LockKeyhole,
+  Moon,
+  Network,
+  Server,
+  ShieldCheck,
+  Sun,
+  User,
+} from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
+import { useTheme } from '../../context/theme';
 import { authService } from '../../services/auth.service';
 import { extractError } from '../../utils/common';
-import { Button, Input, Card } from '../../components/ui';
-import { Hexagon, Lock, User } from 'lucide-react';
+import { Button, Input } from '../../components/ui';
 
 const LoginPage = () => {
   const { login } = useAuth();
   const { success } = useToast();
+  const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
-  
+
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -40,7 +54,7 @@ const LoginPage = () => {
     try {
       const service = isLogin ? authService.login : authService.register;
       const { data } = await service(form);
-      
+
       login(data.token, { username: data.username, role: data.role });
       success(`Welcome, ${data.username}!`);
       navigate('/');
@@ -52,130 +66,145 @@ const LoginPage = () => {
   };
 
   return (
-    <div style={{
-      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      backgroundColor: 'var(--bg-base)',
-      backgroundImage: `
-        radial-gradient(circle at 50% -20%, rgba(56, 139, 253, 0.25) 0%, transparent 60%),
-        linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-        linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px)
-      `,
-      backgroundSize: '100% 100%, 40px 40px, 40px 40px',
-      backgroundPosition: '0 0, center center, center center',
-      padding: 20,
-      position: 'relative'
-    }}>
-      <DataStreams />
-      
-      <div className="fade-in" style={{ width: '100%', maxWidth: 400, position: 'relative', zIndex: 1 }}>
-        {/* Logo Section */}
-        <div style={{ textAlign: 'center', marginBottom: 40 }}>
-          <div style={{ 
-            display: 'inline-flex', padding: 16, 
-            background: 'linear-gradient(135deg, rgba(56,139,253,.15), rgba(57,197,207,.05))', 
-            borderRadius: 20, border: '1px solid rgba(56,139,253,.3)', 
-            marginBottom: 20, color: 'var(--accent-cyan)',
-            boxShadow: '0 0 40px rgba(56,139,253,.2), inset 0 0 20px rgba(56,139,253,.1)'
-          }}>
-            <Hexagon size={44} strokeWidth={1.5} />
-          </div>
-          <h1 style={{ fontSize: '2.2rem', fontWeight: 800, letterSpacing: '-0.03em', marginBottom: 10 }}>
-            <span className="gradient-text">BiCloud</span>
-          </h1>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', fontWeight: 500 }}>Modern Container Management Platform</p>
-        </div>
+    <main className="auth-page">
+      <button
+        type="button"
+        className="auth-theme-toggle"
+        onClick={toggleTheme}
+        aria-label="Toggle theme"
+      >
+        {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+        <span>{theme === 'light' ? 'Dark' : 'Light'}</span>
+      </button>
 
-        <Card glow style={{ padding: 0, overflow: 'hidden' }}>
-          {/* Tabs */}
-          <div style={{ display: 'flex' }}>
-            <Tab active={isLogin} onClick={() => setIsLogin(true)}>Sign In</Tab>
-            <Tab active={!isLogin} onClick={() => setIsLogin(false)}>Register</Tab>
+      <section className="auth-shell">
+        <aside className="auth-brand-panel" aria-label="BiCloud control plane preview">
+          <div className="auth-brand-mark">
+            <div className="auth-logo-box"><Cloud size={24} /></div>
+            <div>
+              <div className="auth-brand-name">BiCloud</div>
+              <div className="auth-brand-meta">Cloud Console</div>
+            </div>
           </div>
 
-          <form onSubmit={handleSubmit} style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <div className="auth-copy">
+            <div className="auth-kicker"><ShieldCheck size={14} /> Private control plane</div>
+            <h1>Container operations without leaving your own infrastructure.</h1>
+            <p>
+              Deploy services, route traffic through the gateway, and monitor workers from a single
+              operational console.
+            </p>
+          </div>
+
+          <div className="auth-console">
+            <div className="auth-console-header">
+              <div>
+                <span className="auth-console-label">Pre-auth preview</span>
+                <strong>No tenant data exposed</strong>
+              </div>
+              <span className="auth-live-pill">Live</span>
+            </div>
+
+            <div className="auth-topology">
+              <TopologyNode icon={Server} title="Control plane" value="Access gated" tone="blue" />
+              <ArrowRight size={18} />
+              <TopologyNode icon={Network} title="Gateway" value="Private route" tone="green" />
+              <ArrowRight size={18} />
+              <TopologyNode icon={Database} title="Workers" value="Fleet ready" tone="cyan" />
+            </div>
+
+            <div className="auth-signal-grid">
+              <SignalItem icon={Activity} label="Session scope" value="JWT" />
+              <SignalItem icon={ShieldCheck} label="Default posture" value="Isolated" />
+              <SignalItem icon={Network} label="Routing model" value="Gateway" />
+            </div>
+          </div>
+        </aside>
+
+        <section className="auth-card" aria-label={isLogin ? 'Sign in' : 'Register'}>
+          <div className="auth-card-header">
+            <div className="auth-logo-box compact"><Cloud size={19} /></div>
+            <div>
+              <p className="auth-panel-kicker">BiCloud account</p>
+              <h2>{isLogin ? 'Sign in to console' : 'Create console account'}</h2>
+            </div>
+          </div>
+
+          <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
+            <AuthTab active={isLogin} onClick={() => setIsLogin(true)}>Sign In</AuthTab>
+            <AuthTab active={!isLogin} onClick={() => setIsLogin(false)}>Register</AuthTab>
+          </div>
+
+          <form className="auth-form" onSubmit={handleSubmit} autoComplete="off">
             {error && <div className="alert alert-error">{error}</div>}
-            
-            <Input 
+
+            <Input
               label="Username"
               name="username"
-              placeholder="Enter your username"
+              placeholder="Username"
               value={form.username}
               onChange={handleInputChange}
               icon={User}
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
             />
 
-            <Input 
+            <Input
               label="Password"
               name="password"
               type="password"
-              placeholder="••••••••"
+              placeholder="Password"
               value={form.password}
               onChange={handleInputChange}
-              icon={Lock}
+              icon={LockKeyhole}
+              autoComplete="new-password"
             />
 
-            <Button type="submit" loading={loading} style={{ width: '100%', marginTop: 8 }}>
-              {isLogin ? 'Sign In' : 'Register'}
+            <Button type="submit" loading={loading} className="auth-submit">
+              {isLogin ? 'Sign In' : 'Create Account'}
+              {!loading && <ArrowRight size={16} />}
             </Button>
           </form>
-        </Card>
 
-        <p style={{ textAlign: 'center', marginTop: 24, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-          © 2026 BiCloud Infrastructure Services
-        </p>
-      </div>
-    </div>
+          <div className="auth-card-footer">
+            <span>Local-first infrastructure console</span>
+            <span>2026</span>
+          </div>
+        </section>
+      </section>
+    </main>
   );
 };
 
-const Tab = ({ active, onClick, children }) => (
-  <button 
+const AuthTab = ({ active, onClick, children }) => (
+  <button
+    type="button"
+    role="tab"
+    aria-selected={active}
+    className={`auth-tab ${active ? 'active' : ''}`}
     onClick={onClick}
-    style={{
-      flex: 1, padding: '16px', border: 'none', background: active ? 'transparent' : 'rgba(255,255,255,0.02)',
-      color: active ? 'var(--accent-blue)' : 'var(--text-muted)', fontWeight: 600, fontSize: '0.875rem',
-      borderBottom: `2px solid ${active ? 'var(--accent-blue)' : 'transparent'}`,
-      cursor: 'pointer', transition: 'all 0.2s'
-    }}
   >
     {children}
   </button>
 );
 
-const DataStreams = () => {
-  // Random streams aligned to the 40px grid.
-  // Background is 'center center', so grid lines are offset 20px from 50%.
-  const streams = [];
-  
-  // Horizontal streams (X axis)
-  const yOffsets = [-260, -140, -20, 100, 220, 340];
-  yOffsets.forEach((y, i) => {
-    streams.push(
-      <div key={`hx-${i}`} className="data-stream data-stream-x" style={{
-        top: `calc(50% + ${y}px)`,
-        animationDelay: `${Math.random() * 4}s`,
-        animationDuration: `${3 + Math.random() * 3}s`
-      }} />
-    );
-  });
-
-  // Vertical streams (Y axis)
-  const xOffsets = [-340, -180, -60, 60, 180, 300, 420];
-  xOffsets.forEach((x, i) => {
-    streams.push(
-      <div key={`vy-${i}`} className="data-stream data-stream-y" style={{
-        left: `calc(50% + ${x}px)`,
-        animationDelay: `${Math.random() * 4}s`,
-        animationDuration: `${4 + Math.random() * 4}s`
-      }} />
-    );
-  });
-
-  return (
-    <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 0 }}>
-      {streams}
+const TopologyNode = ({ icon: Icon, title, value, tone }) => (
+  <div className={`topology-node tone-${tone}`}>
+    <div className="topology-icon">{React.createElement(Icon, { size: 18 })}</div>
+    <div>
+      <span>{title}</span>
+      <strong>{value}</strong>
     </div>
-  );
-};
+  </div>
+);
+
+const SignalItem = ({ icon: Icon, label, value }) => (
+  <div className="auth-signal">
+    {React.createElement(Icon, { size: 15 })}
+    <span>{label}</span>
+    <strong>{value}</strong>
+  </div>
+);
 
 export default LoginPage;

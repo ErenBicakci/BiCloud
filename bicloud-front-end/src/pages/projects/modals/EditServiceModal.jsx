@@ -4,18 +4,22 @@ import { useToast } from '../../../context/ToastContext';
 import { useAuth } from '../../../context/AuthContext';
 import { extractError } from '../../../utils/common';
 import { Modal } from '../../../components/ui/Modal';
-import { Button, Input } from '../../../components/ui';
+import { Button, Input, Badge } from '../../../components/ui';
 import { EnvVarsEditor } from './EnvVarsEditor';
-import { AlertTriangle, Globe, Network } from 'lucide-react';
+import {
+  AlertTriangle,
+  Box,
+  Cpu,
+  Globe,
+  HardDrive,
+  Layers,
+  Network,
+  Save,
+  Server,
+  ShieldCheck,
+} from 'lucide-react';
 
-/**
- * Edits the configuration of an existing service.
- * Service name cannot be changed (mesh/gateway routes depend on the name);
- * replica count is managed via the Scale modal.
- * Saving stops and recreates running containers with the new configuration.
- */
 export const EditServiceModal = ({ service, isOpen, onClose, onSuccess }) => {
-  // Do not mount while closed: the form is initialized with the service's current values on every open
   if (!isOpen || !service) return null;
   return <EditServiceForm service={service} onClose={onClose} onSuccess={onSuccess} />;
 };
@@ -51,7 +55,7 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
     if (!form.imageName.trim()) return setError('Docker image name is required.');
 
     const entries = envEditorRef.current?.commit();
-    if (entries === null) return; // bulk mode parse error — shown in editor
+    if (entries === null) return;
 
     const dupKey = entries.map(ev => ev.key.trim()).find((k, i, arr) => k && arr.indexOf(k) !== i);
     if (dupKey) return setError(`Key "${dupKey}" has been entered more than once.`);
@@ -65,11 +69,10 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
     try {
       await projectService.updateImage(service.id, {
         imageName: form.imageName.trim(),
-        containerPort: parseInt(form.containerPort),
-        memoryLimitMb: parseInt(form.memoryLimitMb),
+        containerPort: parseInt(form.containerPort, 10),
+        memoryLimitMb: parseInt(form.memoryLimitMb, 10),
         cpuLimit: parseFloat(form.cpuLimit),
         environmentVariables: envMap,
-        // non-admins must echo the current value: changing it is admin-only server-side
         allowInternet: isAdmin ? allowInternet : (service.allowInternet ?? false),
         exposeExternally,
       });
@@ -83,99 +86,173 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
     }
   };
 
+  const hasRuntimeImpact = service.runningReplicas > 0 || service.desiredReplicas > 0;
+
   return (
-    <Modal isOpen onClose={onClose} title={`Edit Service: ${service.serviceName}`} maxWidth={560}>
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <Modal isOpen onClose={onClose} title={`Edit service / ${service.serviceName}`} maxWidth={1080}>
+      <form onSubmit={handleSubmit} className="cloud-form">
         {error && <div className="alert alert-error">{error}</div>}
 
-        {(service.runningReplicas > 0 || service.desiredReplicas > 0) && (
-          <div style={{
-            display: 'flex', gap: 10, alignItems: 'flex-start',
-            padding: '10px 12px', borderRadius: 'var(--radius-sm)',
-            background: 'rgba(210,153,34,.08)', border: '1px solid rgba(210,153,34,.3)',
-            fontSize: '0.78rem', color: 'var(--text-secondary)'
-          }}>
-            <AlertTriangle size={15} color="var(--accent-yellow)" style={{ flexShrink: 0, marginTop: 1 }} />
-            When you save, running containers will be stopped and recreated with the new configuration. A brief downtime may occur.
+        <div className="cloud-form-layout">
+          <div className="cloud-form-main">
+            {hasRuntimeImpact && (
+              <div className="alert alert-info">
+                <AlertTriangle size={16} />
+                Running containers will be recreated after saving this configuration.
+              </div>
+            )}
+
+            <FormSection icon={Layers} title="Image and runtime" subtitle="Service name and replica count are managed separately.">
+              <Input
+                label="Container image"
+                name="imageName"
+                value={form.imageName}
+                onChange={handleChange}
+                placeholder="nginx:latest"
+                icon={Box}
+              />
+              <div className="field-grid three">
+                <Input
+                  label="Container port"
+                  name="containerPort"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  value={form.containerPort}
+                  onChange={handleChange}
+                  icon={Network}
+                />
+                <Input
+                  label="Memory (MB)"
+                  name="memoryLimitMb"
+                  type="number"
+                  min="32"
+                  value={form.memoryLimitMb}
+                  onChange={handleChange}
+                  icon={HardDrive}
+                />
+                <Input
+                  label="CPU (core)"
+                  name="cpuLimit"
+                  type="number"
+                  min="0.1"
+                  step="0.1"
+                  value={form.cpuLimit}
+                  onChange={handleChange}
+                  icon={Cpu}
+                />
+              </div>
+            </FormSection>
+
+            <FormSection icon={ShieldCheck} title="Network policy" subtitle="Ingress can change without modifying the service name.">
+              <div className="policy-options">
+                <PolicyOption
+                  active={exposeExternally}
+                  checked={exposeExternally}
+                  onChange={setExposeExternally}
+                  icon={Network}
+                  title="Expose through gateway"
+                  description="Enables host-based north-south access while preserving internal mesh routing."
+                  badge={exposeExternally ? 'Gateway' : 'Mesh only'}
+                />
+
+                {isAdmin && (
+                  <PolicyOption
+                    active={allowInternet}
+                    checked={allowInternet}
+                    onChange={setAllowInternet}
+                    icon={Globe}
+                    title="Allow internet egress"
+                    description="Grants outbound internet access from containers. Keep disabled for isolated workloads."
+                    badge={allowInternet ? 'Admin enabled' : 'Isolated'}
+                  />
+                )}
+              </div>
+            </FormSection>
+
+            <FormSection icon={ShieldCheck} title="Environment variables" subtitle="Stored values are applied when containers are recreated.">
+              <EnvVarsEditor ref={envEditorRef} envVars={envVars} setEnvVars={setEnvVars} />
+            </FormSection>
           </div>
-        )}
 
-        <div className="form-group">
-          <label className="form-label">Docker Image</label>
-          <input
-            className="input"
-            name="imageName"
-            value={form.imageName}
-            onChange={handleChange}
-            placeholder="nginx:latest, redis:7-alpine, myrepo/myapp:v1.0 ..."
-          />
-          <span className="form-hint">Change the tag to switch to a new version.</span>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          <Input
-            label="Port" name="containerPort" type="number" value={form.containerPort} onChange={handleChange}
-          />
-          <Input
-            label="Memory (MB)" name="memoryLimitMb" type="number" value={form.memoryLimitMb} onChange={handleChange}
-          />
-          <Input
-            label="CPU (Core)" name="cpuLimit" type="number" step="0.1" value={form.cpuLimit} onChange={handleChange}
+          <ReviewPanel
+            serviceName={service.serviceName}
+            imageName={form.imageName || 'Not set'}
+            replicas={`${service.runningReplicas ?? 0}/${service.desiredReplicas ?? 0}`}
+            port={form.containerPort}
+            memory={form.memoryLimitMb}
+            cpu={form.cpuLimit}
+            envCount={envVars.filter(e => e.key.trim()).length}
+            external={exposeExternally ? 'Gateway exposed' : 'Mesh only'}
+            egress={isAdmin ? (allowInternet ? 'Allowed' : 'Isolated') : (service.allowInternet ? 'Allowed' : 'Isolated')}
+            impact={hasRuntimeImpact ? 'Recreate containers' : 'No running replicas'}
           />
         </div>
 
-        <EnvVarsEditor ref={envEditorRef} envVars={envVars} setEnvVars={setEnvVars} />
-
-        <label style={{
-          display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer',
-          padding: '10px 12px', borderRadius: 'var(--radius-sm)',
-          background: 'rgba(63,185,80,.06)', border: '1px solid rgba(63,185,80,.24)',
-          fontSize: '0.8rem', color: 'var(--text-secondary)',
-        }}>
-          <input
-            type="checkbox"
-            checked={exposeExternally}
-            onChange={e => setExposeExternally(e.target.checked)}
-            style={{ marginTop: 2 }}
-          />
-          <span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600, color: 'var(--text-primary)' }}>
-              <Network size={13} /> Expose through gateway
-            </span>
-            <br />
-            Allows host-based access from outside the mesh. Internal mesh access remains available when disabled.
-          </span>
-        </label>
-
-        {isAdmin && (
-          <label style={{
-            display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer',
-            padding: '10px 12px', borderRadius: 'var(--radius-sm)',
-            background: 'rgba(88,166,255,.06)', border: '1px solid rgba(88,166,255,.25)',
-            fontSize: '0.8rem', color: 'var(--text-secondary)',
-          }}>
-            <input
-              type="checkbox"
-              checked={allowInternet}
-              onChange={e => setAllowInternet(e.target.checked)}
-              style={{ marginTop: 2 }}
-            />
-            <span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600, color: 'var(--text-primary)' }}>
-                <Globe size={13} /> Allow internet access (admin)
-              </span>
-              <br />
-              Containers normally run on an isolated network with no outbound access.
-              Enable only if this service must reach external APIs.
-            </span>
-          </label>
-        )}
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 8 }}>
+        <div className="modal-actions">
           <Button variant="ghost" type="button" onClick={onClose}>Cancel</Button>
-          <Button type="submit" loading={loading}>Save</Button>
+          <Button type="submit" loading={loading} icon={Save}>Save changes</Button>
         </div>
       </form>
     </Modal>
   );
 };
+
+const FormSection = ({ icon: Icon, title, subtitle, children }) => (
+  <section className="form-section">
+    <div className="form-section-header">
+      <div className="icon-box">
+        {React.createElement(Icon, { size: 16 })}
+      </div>
+      <div>
+        <div className="form-section-title">{title}</div>
+        {subtitle && <div className="form-section-subtitle">{subtitle}</div>}
+      </div>
+    </div>
+    <div className="form-section-body">{children}</div>
+  </section>
+);
+
+const PolicyOption = ({ active, checked, onChange, icon: Icon, title, description, badge }) => (
+  <label className={`policy-option ${active ? 'active' : ''}`}>
+    <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} />
+    <div>
+      <div className="policy-option-title">
+        {React.createElement(Icon, { size: 15 })}
+        {title}
+      </div>
+      <div className="policy-option-desc">{description}</div>
+    </div>
+    <Badge variant={active ? 'blue' : 'gray'}>{badge}</Badge>
+  </label>
+);
+
+const ReviewPanel = ({ serviceName, imageName, replicas, port, memory, cpu, envCount, external, egress, impact }) => (
+  <aside className="form-review">
+    <div className="form-review-header">
+      <div className="form-review-title">
+        <Server size={15} />
+        Review
+      </div>
+    </div>
+    <div className="form-review-body">
+      <ReviewRow label="Service" value={serviceName} />
+      <ReviewRow label="Image" value={imageName} />
+      <ReviewRow label="Replicas" value={replicas} />
+      <ReviewRow label="Port" value={port} />
+      <ReviewRow label="Memory" value={`${memory || '-'} MB`} />
+      <ReviewRow label="CPU" value={`${cpu || '-'} core`} />
+      <ReviewRow label="Env vars" value={envCount} />
+      <ReviewRow label="External" value={external} />
+      <ReviewRow label="Egress" value={egress} />
+      <ReviewRow label="Impact" value={impact} />
+    </div>
+  </aside>
+);
+
+const ReviewRow = ({ label, value }) => (
+  <div className="review-row">
+    <div className="review-label">{label}</div>
+    <div className="review-value" title={String(value)}>{value}</div>
+  </div>
+);

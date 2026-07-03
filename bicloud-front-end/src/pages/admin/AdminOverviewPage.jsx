@@ -3,7 +3,6 @@ import { projectService } from '../../services/project.service';
 import { workerService } from '../../services/worker.service';
 import { adminService } from '../../services/admin.service';
 import { extractError } from '../../utils/common';
-import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { Card, Badge, Spinner } from '../../components/ui';
 import { Link } from 'react-router-dom';
@@ -24,7 +23,6 @@ import {
 
 export default function AdminOverviewPage() {
   const { error, success } = useToast();
-  const { isAdmin } = useAuth();
   const [projects, setProjects] = useState([]);
   const [workers,  setWorkers]  = useState([]);
   const [users,    setUsers]    = useState([]);
@@ -52,9 +50,15 @@ export default function AdminOverviewPage() {
   }, [error]);
 
   useEffect(() => {
-    load();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) load();
+    });
     const interval = setInterval(() => load(true), 30000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [load]);
 
   const handleResync = async () => {
@@ -257,7 +261,7 @@ const AdminStatCard = ({ label, value, icon: Icon, color, bg, link }) => {
       onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-subtle)'; }}
     >
       <div style={{ padding: 10, background: bg, borderRadius: 10, color, flexShrink: 0 }}>
-        <Icon size={20} />
+        {React.createElement(Icon, { size: 20 })}
       </div>
       <div>
         <div style={{ fontSize: '.7rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>
@@ -284,7 +288,7 @@ const SectionHeader = ({ icon: Icon, iconColor, iconBg, title, subtitle, link })
   }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <div style={{ padding: 6, background: iconBg, borderRadius: 8, color: iconColor, display: 'flex' }}>
-        <Icon size={15} />
+        {React.createElement(Icon, { size: 15 })}
       </div>
       <div>
         <div style={{ fontWeight: 700, fontSize: '.9rem' }}>{title}</div>
@@ -334,7 +338,7 @@ const WorkerRow = ({ worker, isLast }) => {
 
 const MiniStat = ({ icon: Icon, value, warn }) => (
   <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '.75rem', color: warn ? 'var(--accent-red)' : 'var(--text-muted)' }}>
-    <Icon size={11} />
+    {React.createElement(Icon, { size: 11 })}
     <span style={{ fontWeight: warn ? 600 : 400 }}>{value}</span>
   </div>
 );

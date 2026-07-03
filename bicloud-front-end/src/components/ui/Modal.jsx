@@ -1,13 +1,14 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
+import { X } from 'lucide-react';
 
-export const Modal = ({ 
-  isOpen, 
-  onClose, 
-  title, 
-  children, 
+export const Modal = ({
+  isOpen,
+  onClose,
+  title,
+  children,
   footer,
-  maxWidth = 480 
+  maxWidth = 480,
 }) => {
   if (!isOpen) return null;
 
@@ -16,9 +17,11 @@ export const Modal = ({
       <div className="modal fade-in" style={{ maxWidth }}>
         <div className="modal-header">
           {title && <h3 className="modal-title">{title}</h3>}
-          <button className="btn-icon" onClick={onClose}>✕</button>
+          <button className="btn-icon" onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </button>
         </div>
-        
+
         <div className="modal-content">
           {children}
         </div>

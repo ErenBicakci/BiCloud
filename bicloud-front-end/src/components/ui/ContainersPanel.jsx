@@ -54,30 +54,35 @@ export const ContainersPanel = ({ projectId, serviceName, reloadKey, onLogs, onS
   // Fetch
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    containerService.search(projectId, {
-      serviceName: serviceName || undefined,
-      status: statusFilter === 'ALL' ? undefined : statusFilter,
-      search: debouncedSearch || undefined,
-      sortBy: sortKey,
-      sortDir,
-      page,
-      size: pageSize,
-    }).then(res => {
+    queueMicrotask(() => {
       if (cancelled) return;
-      setData(res.data);
-    }).catch(err => {
-      if (cancelled) return;
-      setError(extractError(err));
-    }).finally(() => {
-      if (!cancelled) setLoading(false);
+      setLoading(true);
+      setError(null);
+      containerService.search(projectId, {
+        serviceName: serviceName || undefined,
+        status: statusFilter === 'ALL' ? undefined : statusFilter,
+        search: debouncedSearch || undefined,
+        sortBy: sortKey,
+        sortDir,
+        page,
+        size: pageSize,
+      }).then(res => {
+        if (cancelled) return;
+        setData(res.data);
+      }).catch(err => {
+        if (cancelled) return;
+        setError(extractError(err));
+      }).finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     });
     return () => { cancelled = true; };
   }, [projectId, serviceName, statusFilter, debouncedSearch, sortKey, sortDir, page, pageSize, reloadKey]);
 
   // Reset page when filter changes
-  useEffect(() => { setPage(0); }, [debouncedSearch, statusFilter, pageSize]);
+  useEffect(() => {
+    queueMicrotask(() => setPage(0));
+  }, [debouncedSearch, statusFilter, pageSize]);
 
   const toggleSort = (key) => {
     if (sortKey === key) {
@@ -267,7 +272,7 @@ const SortableTh = ({ label, active, dir, onClick }) => {
     <th onClick={onClick} style={{ cursor: 'pointer', userSelect: 'none', color: active ? 'var(--text-primary)' : undefined }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
         {label}
-        <Icon size={12} color={active ? 'var(--accent-blue)' : 'var(--text-muted)'} />
+        {React.createElement(Icon, { size: 12, color: active ? 'var(--accent-blue)' : 'var(--text-muted)' })}
       </span>
     </th>
   );
@@ -317,7 +322,7 @@ const PagerBtn = ({ disabled, onClick, icon: Icon, rotate, title }) => (
       opacity: disabled ? 0.4 : 1, transition: 'all .15s',
     }}
   >
-    <Icon size={14} style={rotate ? { transform: 'rotate(180deg)' } : undefined} />
+    {React.createElement(Icon, { size: 14, style: rotate ? { transform: 'rotate(180deg)' } : undefined })}
   </button>
 );
 

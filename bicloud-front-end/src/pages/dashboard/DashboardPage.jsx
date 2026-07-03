@@ -1,11 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { projectService } from '../../services/project.service';
 import { extractError } from '../../utils/common';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { Card, Badge, Spinner, Button } from '../../components/ui';
-import { Link, useNavigate } from 'react-router-dom';
-import { FolderKanban, Box, Layers, Plus, ArrowRight, Play } from 'lucide-react';
+import { Badge, Spinner, Button } from '../../components/ui';
+import {
+  ArrowRight,
+  Box,
+  Cloud,
+  FolderKanban,
+  Globe,
+  Layers,
+  Plus,
+  ShieldCheck,
+} from 'lucide-react';
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -15,202 +24,191 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    projectService.list()
-      .then(r => setProjects(r.data || []))
-      .catch(err => error(extractError(err)))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    queueMicrotask(() => {
+      projectService.list()
+        .then(r => {
+          if (!cancelled) setProjects(r.data || []);
+        })
+        .catch(err => {
+          if (!cancelled) error(extractError(err));
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    });
+    return () => { cancelled = true; };
   }, [error]);
 
-  const totalContainers  = projects.reduce((s, p) => s + (p.totalRunningContainers || 0), 0);
-  const totalServices    = projects.reduce((s, p) => s + (p.images?.length || 0), 0);
-  const activeProjects   = projects.filter(p => p.totalRunningContainers > 0).length;
+  const summary = useMemo(() => {
+    const services = projects.flatMap(p => p.images || []);
+    const runningContainers = projects.reduce((s, p) => s + (p.totalRunningContainers || 0), 0);
+    const exposedServices = services.filter(s => s.exposeExternally).length;
+    const activeProjects = projects.filter(p => p.totalRunningContainers > 0).length;
 
-  const stats = [
-    {
-      label: 'Total Projects',
-      value: projects.length,
-      icon: FolderKanban,
-      color: 'var(--accent-blue)',
-      bg: 'rgba(56,139,253,.1)',
-      link: '/projects',
-    },
-    {
-      label: 'Active Projects',
-      value: activeProjects,
-      icon: Play,
-      color: 'var(--accent-green)',
-      bg: 'rgba(63,185,80,.1)',
-    },
-    {
-      label: 'Service Definitions',
-      value: totalServices,
-      icon: Layers,
-      color: 'var(--accent-cyan)',
-      bg: 'rgba(57,197,207,.1)',
-    },
-    {
-      label: 'Running Containers',
-      value: totalContainers,
-      icon: Box,
-      color: 'var(--accent-purple)',
-      bg: 'rgba(163,113,247,.1)',
-    },
-  ];
+    return {
+      totalProjects: projects.length,
+      activeProjects,
+      services: services.length,
+      runningContainers,
+      exposedServices,
+      internalOnlyServices: services.length - exposedServices,
+    };
+  }, [projects]);
+
+  const recentProjects = [...projects]
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+    .slice(0, 12);
 
   if (loading) return <div className="page-loader"><Spinner size="lg" /></div>;
 
   return (
-    <div style={{ padding: '32px', maxWidth: 1200 }}>
-
-      {/* Welcome Header */}
-      <div style={{ marginBottom: 36 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: 6, letterSpacing: '-.02em' }}>
-              Welcome, <span className="gradient-text">{user?.username}</span>
-            </h1>
-            <p style={{ color: 'var(--text-muted)', fontSize: '.9rem' }}>
-              Here's an overview of your container projects.
-            </p>
-          </div>
-          <Button icon={Plus} onClick={() => navigate('/projects')}>
-            New Project
-          </Button>
+    <div className="page">
+      <header className="page-header">
+        <div>
+          <div className="page-kicker"><Cloud size={14} /> Workspace Overview</div>
+          <h1 className="page-title">Cloud resources</h1>
+          <p className="page-subtitle">
+            Operational view for {user?.username}: projects, services, running containers, and gateway exposure.
+          </p>
         </div>
-      </div>
+        <div className="page-actions">
+          <Button variant="ghost" icon={FolderKanban} onClick={() => navigate('/projects')}>
+            View Projects
+          </Button>
+          <Button icon={Plus} onClick={() => navigate('/projects')}>New Project</Button>
+        </div>
+      </header>
 
-      {/* Stats */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-        gap: 16,
-        marginBottom: 32,
-      }}>
-        {stats.map(stat => (
-          <StatCard key={stat.label} {...stat} />
-        ))}
-      </div>
+      <section className="summary-strip">
+        <SummaryItem
+          icon={FolderKanban}
+          label="Projects"
+          value={summary.totalProjects}
+          detail={`${summary.activeProjects} active`}
+          accent="var(--accent-blue)"
+        />
+        <SummaryItem
+          icon={Layers}
+          label="Services"
+          value={summary.services}
+          detail={`${summary.internalOnlyServices} mesh-only`}
+          accent="var(--accent-cyan)"
+        />
+        <SummaryItem
+          icon={Box}
+          label="Containers"
+          value={summary.runningContainers}
+          detail="running instances"
+          accent="var(--accent-green)"
+        />
+        <SummaryItem
+          icon={ShieldCheck}
+          label="External routes"
+          value={summary.exposedServices}
+          detail="gateway exposed"
+          accent="var(--accent-yellow)"
+        />
+      </section>
 
-      {/* Recent Projects */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 20 }}>
-        <Card style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{
-            padding: '18px 20px',
-            borderBottom: '1px solid var(--border-subtle)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ padding: 6, background: 'rgba(56,139,253,.1)', borderRadius: 8, color: 'var(--accent-blue)', display: 'flex' }}>
-                <FolderKanban size={16} />
-              </div>
-              <h3 style={{ fontSize: '.95rem', fontWeight: 700 }}>My Projects</h3>
-            </div>
-            <Link
-              to="/projects"
-              style={{
-                display: 'flex', alignItems: 'center', gap: 4,
-                fontSize: '.8rem', color: 'var(--accent-blue)', textDecoration: 'none', fontWeight: 500,
-              }}
-            >
-              View All <ArrowRight size={13} />
-            </Link>
+      <section className="section-card">
+        <div className="section-card-header">
+          <div>
+            <div className="section-card-title"><FolderKanban size={16} /> Resource inventory</div>
+            <div className="panel-subtitle">Project definitions with runtime and routing state</div>
           </div>
+        </div>
 
-          {projects.length === 0 ? (
-            <EmptyProjects onNavigate={() => navigate('/projects')} />
-          ) : (
-            <div>
-              {projects.slice(0, 8).map((project, idx) => (
-                <ProjectRow
-                  key={project.id}
-                  project={project}
-                  isLast={idx === Math.min(projects.length, 8) - 1}
-                />
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
+        {recentProjects.length === 0 ? (
+          <EmptyWorkspace onCreate={() => navigate('/projects')} />
+        ) : (
+          <div className="table-wrap">
+            <table className="resource-table">
+              <thead>
+                <tr>
+                  <th>Project</th>
+                  <th>Owner</th>
+                  <th style={{ textAlign: 'right' }}>Services</th>
+                  <th style={{ textAlign: 'right' }}>Running</th>
+                  <th style={{ textAlign: 'right' }}>External</th>
+                  <th>Status</th>
+                  <th style={{ width: 48 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentProjects.map(project => (
+                  <ProjectRow
+                    key={project.id}
+                    project={project}
+                    onOpen={() => navigate(`/projects/${project.id}`)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
 
-const StatCard = ({ label, value, icon: Icon, color, bg, link }) => {
-  const content = (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: 16,
-      padding: '18px 20px',
-      background: 'var(--bg-card)',
-      border: '1px solid var(--border-subtle)',
-      borderRadius: 'var(--radius-lg)',
-      transition: 'border-color var(--transition)',
-      cursor: link ? 'pointer' : 'default',
-    }}
-      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-default)'; }}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-subtle)'; }}
-    >
-      <div style={{ padding: 10, background: bg, borderRadius: 10, color, flexShrink: 0 }}>
-        <Icon size={20} />
-      </div>
-      <div>
-        <div style={{ fontSize: '.72rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>
-          {label}
-        </div>
-        <div style={{ fontSize: '1.6rem', fontWeight: 800, lineHeight: 1, color: 'var(--text-primary)' }}>
-          {value}
-        </div>
-      </div>
+const SummaryItem = ({ icon: Icon, label, value, detail, accent }) => (
+  <div className="summary-item">
+    <div className="icon-box" style={{ color: accent, borderColor: `${accent}44`, background: `${accent}12` }}>
+      {React.createElement(Icon, { size: 17 })}
     </div>
-  );
+    <div>
+      <div className="summary-value">{value}</div>
+      <div className="summary-label">{label}</div>
+      <div className="summary-detail">{detail}</div>
+    </div>
+  </div>
+);
 
-  if (link) return <Link to={link} style={{ textDecoration: 'none' }}>{content}</Link>;
-  return content;
-};
+const ProjectRow = ({ project, onOpen }) => {
+  const running = project.totalRunningContainers || 0;
+  const services = project.images?.length || 0;
+  const exposed = (project.images || []).filter(img => img.exposeExternally).length;
 
-const ProjectRow = ({ project, isLast }) => {
-  const isRunning = project.totalRunningContainers > 0;
+  const handleKeyDown = (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onOpen();
+    }
+  };
+
   return (
-    <Link
-      to={`/projects/${project.id}`}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '13px 20px',
-        textDecoration: 'none',
-        color: 'inherit',
-        borderBottom: isLast ? 'none' : '1px solid var(--border-subtle)',
-        transition: 'background var(--transition)',
-      }}
-      className="list-item-hover"
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <div className={`health-dot ${isRunning ? 'running' : 'stopped'}`} />
-        <div>
-          <div style={{ fontWeight: 600, fontSize: '.9rem' }}>{project.name}</div>
-          <div style={{ fontSize: '.72rem', color: 'var(--text-muted)', marginTop: 2 }}>
-            {project.images?.length || 0} services
+    <tr onClick={onOpen} onKeyDown={handleKeyDown} tabIndex={0}>
+      <td>
+        <div className="resource-primary">
+          <div className={`health-dot ${running > 0 ? 'running' : 'stopped'}`} />
+          <div style={{ minWidth: 0 }}>
+            <div className="resource-title">{project.name}</div>
+            <div className="resource-subtitle">Project ID: {project.id}</div>
           </div>
         </div>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <Badge variant={isRunning ? 'green' : 'gray'}>
-          {isRunning ? `${project.totalRunningContainers} container` : 'Stopped'}
-        </Badge>
-        <ArrowRight size={14} style={{ color: 'var(--text-muted)' }} />
-      </div>
-    </Link>
+      </td>
+      <td className="muted-cell">{project.ownerUsername}</td>
+      <td className="number-cell" style={{ textAlign: 'right' }}>{services}</td>
+      <td className="number-cell" style={{ textAlign: 'right' }}>{running}</td>
+      <td className="number-cell" style={{ textAlign: 'right' }}>{exposed}</td>
+      <td>
+        <Badge variant={running > 0 ? 'green' : 'gray'}>{running > 0 ? 'Running' : 'Stopped'}</Badge>
+      </td>
+      <td style={{ textAlign: 'right' }}>
+        <ArrowRight size={15} color="var(--text-muted)" />
+      </td>
+    </tr>
   );
 };
 
-const EmptyProjects = ({ onNavigate }) => (
-  <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)' }}>
-    <FolderKanban size={40} style={{ opacity: 0.2, marginBottom: 12 }} />
-    <p style={{ marginBottom: 16, fontSize: '.9rem' }}>You haven't created any projects yet.</p>
-    <Button variant="ghost" icon={Plus} onClick={onNavigate}>Create First Project</Button>
+const EmptyWorkspace = ({ onCreate }) => (
+  <div className="empty-state">
+    <FolderKanban size={38} />
+    <div>
+      <div style={{ color: 'var(--text-primary)', fontWeight: 700, marginBottom: 4 }}>No projects yet</div>
+      <p>Create a project, add services, and deploy containers to workers.</p>
+    </div>
+    <Button variant="ghost" icon={Plus} onClick={onCreate}>Create Project</Button>
   </div>
 );
