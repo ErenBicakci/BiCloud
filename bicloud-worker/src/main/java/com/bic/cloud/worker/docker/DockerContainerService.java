@@ -89,10 +89,11 @@ public class DockerContainerService {
                             .withAliases(List.of(req.getServiceName())))
                     .exec();
 
-            // admin-granted egress: also attach to the internet-capable bridge
-            // (the internal project network has no outbound route)
+            // admin-granted egress: also attach to this project's egress bridge
+            // (the internal project network has no outbound route). Per-project
+            // so egress-enabled tenants never share an L2 segment.
             if (req.isAllowInternet()) {
-                String egressNetworkId = dockerNetworkService.ensureEgressNetworkExists();
+                String egressNetworkId = dockerNetworkService.ensureEgressNetworkExists(req.getProjectName());
                 dockerClient.connectToNetworkCmd()
                         .withContainerId(containerId)
                         .withNetworkId(egressNetworkId)
@@ -100,6 +101,11 @@ public class DockerContainerService {
                 log.info("Container {} attached to egress network (allowInternet=true)", containerName);
             }
 
+            // Fail-CLOSED: the container is born on Docker's default bridge (which
+            // reaches the internet) and must be detached before it starts. If the
+            // disconnect fails we must NOT start it - an isolated (allowInternet=false)
+            // service would otherwise leak onto the internet. Verify with inspect and
+            // let the outer catch clean up the half-created container.
             try {
                 dockerClient.disconnectFromNetworkCmd()
                         .withNetworkId("bridge")
@@ -107,7 +113,12 @@ public class DockerContainerService {
                         .withForce(false)
                         .exec();
             } catch (Exception e) {
-                log.warn("Could not disconnect from default bridge (non-critical): {}", e.getMessage());
+                log.warn("Default bridge disconnect call failed for {}: {}. Verifying isolation.",
+                        containerId, e.getMessage());
+            }
+            if (isConnectedToBridge(containerId)) {
+                throw new IllegalStateException(
+                        "Container still attached to the default bridge; refusing to start (would break network isolation)");
             }
 
             dockerClient.startContainerCmd(containerId).exec();
@@ -215,6 +226,24 @@ public class DockerContainerService {
         if (net == null) return null;
         String ip = net.getIpAddress();
         return (ip != null && !ip.isBlank()) ? ip : null;
+    }
+
+    /**
+     * True if the container is still attached to Docker's default "bridge"
+     * network. Used to enforce fail-closed isolation: a container that could not
+     * be detached from the internet-facing bridge must not be started.
+     */
+    private boolean isConnectedToBridge(String containerId) {
+        try {
+            var networks = dockerClient.inspectContainerCmd(containerId)
+                    .exec().getNetworkSettings().getNetworks();
+            return networks != null && networks.containsKey("bridge");
+        } catch (Exception e) {
+            // cannot verify isolation -> treat as unsafe (fail-closed)
+            log.warn("Could not inspect networks for {} ({}); assuming still bridged.",
+                    containerId, e.getMessage());
+            return true;
+        }
     }
 
     private static final Pattern DOCKER_NAME_PATTERN =

@@ -14,11 +14,13 @@ public class DockerNetworkService {
     private static final String NETWORK_PREFIX = "bicloud-";
 
     /**
-     * Shared internet-capable bridge for services with the admin-granted
-     * egress flag. Project networks are internal (no outbound); a container
-     * that must reach external APIs gets attached to this one as well.
+     * Per-project internet-capable bridge for services with the admin-granted
+     * egress flag. Project networks are internal (no outbound); a container that
+     * must reach external APIs gets attached to its project's egress bridge too.
+     * One bridge PER PROJECT (not a single shared one): egress-enabled containers
+     * of different tenants must not share an L2 segment.
      */
-    private static final String EGRESS_NETWORK = "bicloud-egress";
+    private static final String EGRESS_PREFIX = "bicloud-egress-";
 
     private final DockerClient dockerClient;
 
@@ -34,9 +36,14 @@ public class DockerNetworkService {
         return ensureNetwork(networkName(projectName), true);
     }
 
-    /** Internet-capable bridge for egress-enabled services (create-if-missing). */
-    public String ensureEgressNetworkExists() {
-        return ensureNetwork(EGRESS_NETWORK, false);
+    /** Project name -> its egress network name. */
+    public static String egressNetworkName(String projectName) {
+        return EGRESS_PREFIX + projectName.toLowerCase();
+    }
+
+    /** Per-project internet-capable bridge for egress-enabled services (create-if-missing). */
+    public String ensureEgressNetworkExists(String projectName) {
+        return ensureNetwork(egressNetworkName(projectName), false);
     }
 
     private String ensureNetwork(String name, boolean internal) {

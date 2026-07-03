@@ -43,6 +43,14 @@ public class GatewayNetworkManager {
             "bicloud-infra"
     );
 
+    /**
+     * Per-project egress bridges (bicloud-egress-*) are internet-uplink networks,
+     * not tenant service networks. The gateway must not join them or fold their
+     * subnets into the mesh source-IP map - doing so would corrupt tenant
+     * isolation. They are excluded from the scan by this prefix.
+     */
+    private static final String EGRESS_PREFIX = "bicloud-egress-";
+
     @Value("${bicloud.gateway.container-name:}")
     private String configuredContainerName;
 
@@ -98,6 +106,7 @@ public class GatewayNetworkManager {
                     .stream()
                     .filter(n -> n.getName().startsWith(NETWORK_PREFIX))
                     .filter(n -> !EXCLUDED_NETWORKS.contains(n.getName()))
+                    .filter(n -> !n.getName().startsWith(EGRESS_PREFIX))
                     .collect(Collectors.toList());
 
             if (bicloudNetworks.isEmpty()) {
