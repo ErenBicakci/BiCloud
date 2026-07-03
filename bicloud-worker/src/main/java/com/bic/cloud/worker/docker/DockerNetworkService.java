@@ -13,6 +13,13 @@ public class DockerNetworkService {
 
     private static final String NETWORK_PREFIX = "bicloud-";
 
+    /**
+     * Shared internet-capable bridge for services with the admin-granted
+     * egress flag. Project networks are internal (no outbound); a container
+     * that must reach external APIs gets attached to this one as well.
+     */
+    private static final String EGRESS_NETWORK = "bicloud-egress";
+
     private final DockerClient dockerClient;
 
 
@@ -24,7 +31,15 @@ public class DockerNetworkService {
 
     //create the network if missing. double-checked
     public String ensureNetworkExists(String projectName) {
-        String name = networkName(projectName);
+        return ensureNetwork(networkName(projectName), true);
+    }
+
+    /** Internet-capable bridge for egress-enabled services (create-if-missing). */
+    public String ensureEgressNetworkExists() {
+        return ensureNetwork(EGRESS_NETWORK, false);
+    }
+
+    private String ensureNetwork(String name, boolean internal) {
 
         var existing = dockerClient.listNetworksCmd()
                 .withNameFilter(name)
@@ -42,9 +57,9 @@ public class DockerNetworkService {
             var response = dockerClient.createNetworkCmd()
                     .withName(name)
                     .withDriver("bridge")
-                    .withInternal(true)
+                    .withInternal(internal)
                     .exec();
-            log.info("Created docker network: {} (id={})", name, response.getId());
+            log.info("Created docker network: {} (id={}, internal={})", name, response.getId(), internal);
             return response.getId();
         } catch (ConflictException e) {
             // another thread created it at the same moment - query again for the ID

@@ -44,4 +44,7 @@ public class UpdateProjectImageDto {
     @DecimalMin(value = "0.1", message = "cpuLimit must be at least 0.1 cores.")
     @DecimalMax(value = "4.0", message = "cpuLimit may be at most 4.0 cores.")
     private Double cpuLimit;
+
+    /** Egress opt-in; only admins may change it (checked in the service layer). */
+    private boolean allowInternet;
 }

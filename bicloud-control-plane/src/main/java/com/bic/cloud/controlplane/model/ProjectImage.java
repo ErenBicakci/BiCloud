@@ -72,6 +72,15 @@ public class ProjectImage {
     @Builder.Default
     private boolean stoppedByUser = false;
 
+    /**
+     * Egress opt-in: when true the worker also attaches the container to an
+     * internet-capable bridge; otherwise it lives only on the internal project
+     * network. Only admins may enable it (enforced in the service layer).
+     */
+    @Column(name = "allow_internet", nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private boolean allowInternet = false;
+
     @PrePersist
     protected void onCreate() {
         this.createdAt = Instant.now();

@@ -168,6 +168,11 @@ public class OrchestrationService {
 
         ProjectImage image = projectImageService.findByIdWithProject(imageId);
         projectService.assertOwnerOrAdmin(image.getProject(), caller);
+        boolean egressChanged = dto.isAllowInternet() != image.isAllowInternet();
+        if (egressChanged) {
+            // changing the egress flag in either direction is admin-only
+            ProjectImageService.assertCanSetAllowInternet(true, caller);
+        }
 
         log.info("Updating image '{}' (id={}) in project '{}'",
                 image.getServiceName(), imageId, image.getProject().getName());
@@ -181,6 +186,7 @@ public class OrchestrationService {
             managed.setContainerPort(dto.getContainerPort());
             managed.setMemoryLimitMb(dto.getMemoryLimitMb());
             managed.setCpuLimit(dto.getCpuLimit());
+            managed.setAllowInternet(dto.isAllowInternet());
 
             // @ElementCollection: mutate the managed map in place, don't replace the reference
             if (managed.getEnvironmentVariables() == null) {
@@ -220,7 +226,10 @@ public class OrchestrationService {
 
         auditService.userAction(caller, AuditEvent.AuditAction.SERVICE_UPDATED,
                 AuditEvent.TargetType.SERVICE, image.getServiceName(), image.getProject(),
-                "Service updated (image=" + image.getImageName() + "), containers recreated");
+                "Service updated (image=" + image.getImageName() + "), containers recreated"
+                        + (egressChanged
+                            ? " - internet egress " + (dto.isAllowInternet() ? "ENABLED" : "disabled") + " by admin"
+                            : ""));
     }
 
     public void scale(Long imageId, int newReplicas, BicloudUserDetails caller) {

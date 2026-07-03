@@ -36,5 +36,6 @@ public class ProjectDetailResponse {
         private Instant createdAt;
         private int consecutiveDeployFailures;
         private Instant lastDeployFailureAt;
+        private boolean allowInternet;
     }
 }

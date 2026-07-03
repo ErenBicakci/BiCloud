@@ -123,6 +123,7 @@ public class ProjectService {
                     .createdAt(img.getCreatedAt())
                     .consecutiveDeployFailures(img.getConsecutiveDeployFailures())
                     .lastDeployFailureAt(img.getLastDeployFailureAt())
+                    .allowInternet(img.isAllowInternet())
                     .build());
         }
 

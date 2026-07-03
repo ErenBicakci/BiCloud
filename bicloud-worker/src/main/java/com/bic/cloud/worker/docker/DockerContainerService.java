@@ -89,6 +89,17 @@ public class DockerContainerService {
                             .withAliases(List.of(req.getServiceName())))
                     .exec();
 
+            // admin-granted egress: also attach to the internet-capable bridge
+            // (the internal project network has no outbound route)
+            if (req.isAllowInternet()) {
+                String egressNetworkId = dockerNetworkService.ensureEgressNetworkExists();
+                dockerClient.connectToNetworkCmd()
+                        .withContainerId(containerId)
+                        .withNetworkId(egressNetworkId)
+                        .exec();
+                log.info("Container {} attached to egress network (allowInternet=true)", containerName);
+            }
+
             try {
                 dockerClient.disconnectFromNetworkCmd()
                         .withNetworkId("bridge")

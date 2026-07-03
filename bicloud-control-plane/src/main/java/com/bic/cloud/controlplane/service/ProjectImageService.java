@@ -2,6 +2,7 @@ package com.bic.cloud.controlplane.service;
 
 import com.bic.cloud.controlplane.dto.CreateProjectImageDto;
 import com.bic.cloud.controlplane.dto.ProjectImageResponse;
+import com.bic.cloud.controlplane.exception.ForbiddenException;
 import com.bic.cloud.controlplane.exception.ProjectImageNotFoundException;
 import com.bic.cloud.controlplane.exception.ProjectNotFoundException;
 import com.bic.cloud.controlplane.model.AuditEvent;
@@ -45,6 +46,7 @@ public class ProjectImageService {
                 .orElseThrow(() -> new ProjectNotFoundException(dto.getProjectId()));
 
         projectService.assertOwnerOrAdmin(project, caller);
+        assertCanSetAllowInternet(dto.isAllowInternet(), caller);
 
         ProjectImage projectImage = ProjectImage.builder()
                 .project(project)
@@ -55,6 +57,7 @@ public class ProjectImageService {
                 .cpuLimit(dto.getCpuLimit())
                 .environmentVariables(dto.getEnvironmentVariables())
                 .desiredReplicas(dto.getDesiredReplicas())
+                .allowInternet(dto.isAllowInternet())
                 .build();
 
         ProjectImage saved = projectImageRepository.save(projectImage);
@@ -63,7 +66,8 @@ public class ProjectImageService {
 
         auditService.userAction(caller, AuditEvent.AuditAction.SERVICE_CREATED,
                 AuditEvent.TargetType.SERVICE, saved.getServiceName(), project,
-                "Service added (image=" + saved.getImageName() + ", " + saved.getDesiredReplicas() + " replika)");
+                "Service added (image=" + saved.getImageName() + ", " + saved.getDesiredReplicas() + " replika)"
+                        + (saved.isAllowInternet() ? " - internet egress ENABLED by admin" : ""));
 
         return ProjectImageResponse.builder()
                 .id(saved.getId())
@@ -74,7 +78,24 @@ public class ProjectImageService {
                 .desiredReplicas(saved.getDesiredReplicas())
                 .memoryLimitMb(saved.getMemoryLimitMb())
                 .cpuLimit(saved.getCpuLimit())
+                .allowInternet(saved.isAllowInternet())
                 .build();
+    }
+
+    /**
+     * Egress is a hard admin-only capability: containers live on internal
+     * project networks by default; internet access is granted per service
+     * and only by an admin.
+     */
+    public static void assertCanSetAllowInternet(boolean requested, BicloudUserDetails caller) {
+        if (!requested) {
+            return;
+        }
+        boolean isAdmin = caller.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+        if (!isAdmin) {
+            throw new ForbiddenException("Only admins can enable internet access for a service.");
+        }
     }
 
     /**

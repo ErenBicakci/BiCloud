@@ -23,6 +23,7 @@ public class WorkerRequestMapper {
         }
         workerContainerCreateRequest.setEnv(projectImage.getEnvironmentVariables());
         workerContainerCreateRequest.setMemoryLimitMb(projectImage.getMemoryLimitMb());
+        workerContainerCreateRequest.setAllowInternet(projectImage.isAllowInternet());
         return workerContainerCreateRequest;
     }
 }

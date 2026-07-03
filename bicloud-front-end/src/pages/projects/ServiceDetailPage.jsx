@@ -280,6 +280,9 @@ export default function ServiceDetailPage() {
           <SectionTitle icon={Tag}>Meta</SectionTitle>
           <KvRow icon={Server} label="Service ID" value={`#${service.id}`} mono />
           <KvRow icon={Calendar} label="Created" value={formatDate(service.createdAt)} />
+          <KvRow icon={Globe} label="Internet"
+                 value={service.allowInternet ? 'Allowed (admin-granted)' : 'Isolated (no egress)'}
+                 valueColor={service.allowInternet ? 'var(--accent-yellow)' : 'var(--accent-green)'} />
           <KvRow icon={Activity} label="Health"
                  value={isHealthy ? 'Healthy' : (isPartial ? 'Partial' : (isStopped ? 'Stopped' : 'Degraded'))}
                  valueColor={isHealthy ? 'var(--accent-green)' : (isPartial ? 'var(--accent-yellow)' : 'var(--accent-red)')} />

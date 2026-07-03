@@ -1,13 +1,16 @@
 import React, { useState, useRef } from 'react';
 import { projectService } from '../../../services/project.service';
 import { useToast } from '../../../context/ToastContext';
+import { useAuth } from '../../../context/AuthContext';
 import { extractError } from '../../../utils/common';
 import { Modal } from '../../../components/ui/Modal';
 import { Button, Input } from '../../../components/ui';
 import { EnvVarsEditor } from './EnvVarsEditor';
+import { Globe } from 'lucide-react';
 
 export const AddImageModal = ({ projectId, isOpen, onClose, onSuccess }) => {
   const { success } = useToast();
+  const { isAdmin } = useAuth();
   const envEditorRef = useRef(null);
 
   const [loading, setLoading] = useState(false);
@@ -21,6 +24,7 @@ export const AddImageModal = ({ projectId, isOpen, onClose, onSuccess }) => {
     cpuLimit: '0.5',
   });
   const [envVars, setEnvVars] = useState([]);
+  const [allowInternet, setAllowInternet] = useState(false);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -62,6 +66,7 @@ export const AddImageModal = ({ projectId, isOpen, onClose, onSuccess }) => {
         memoryLimitMb: parseInt(form.memoryLimitMb),
         cpuLimit: parseFloat(form.cpuLimit),
         environmentVariables: envMap,
+        allowInternet: isAdmin ? allowInternet : false,
       });
       success('Service added successfully.');
       onSuccess();
@@ -112,6 +117,30 @@ export const AddImageModal = ({ projectId, isOpen, onClose, onSuccess }) => {
         </div>
 
         <EnvVarsEditor ref={envEditorRef} envVars={envVars} setEnvVars={setEnvVars} />
+
+        {isAdmin && (
+          <label style={{
+            display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer',
+            padding: '10px 12px', borderRadius: 'var(--radius-sm)',
+            background: 'rgba(88,166,255,.06)', border: '1px solid rgba(88,166,255,.25)',
+            fontSize: '0.8rem', color: 'var(--text-secondary)',
+          }}>
+            <input
+              type="checkbox"
+              checked={allowInternet}
+              onChange={e => setAllowInternet(e.target.checked)}
+              style={{ marginTop: 2 }}
+            />
+            <span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600, color: 'var(--text-primary)' }}>
+                <Globe size={13} /> Allow internet access (admin)
+              </span>
+              <br />
+              Containers normally run on an isolated network with no outbound access.
+              Enable only if this service must reach external APIs.
+            </span>
+          </label>
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 8 }}>
           <Button variant="ghost" type="button" onClick={onClose}>Cancel</Button>

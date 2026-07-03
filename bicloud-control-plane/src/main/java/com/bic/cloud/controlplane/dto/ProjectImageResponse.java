@@ -15,4 +15,5 @@ public class ProjectImageResponse {
     private int desiredReplicas;
     private Integer memoryLimitMb;
     private Double cpuLimit;
+    private boolean allowInternet;
 }

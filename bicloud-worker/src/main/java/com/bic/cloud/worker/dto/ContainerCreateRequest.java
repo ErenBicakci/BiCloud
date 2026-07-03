@@ -25,4 +25,7 @@ public class ContainerCreateRequest {
     private Integer memoryLimitMb;
 
     private String instanceId;
+
+    /** When true the container is also attached to the internet-capable egress bridge. */
+    private boolean allowInternet;
 }

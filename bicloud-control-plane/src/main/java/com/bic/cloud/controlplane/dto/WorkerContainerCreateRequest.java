@@ -20,4 +20,7 @@ public class WorkerContainerCreateRequest {
     private Integer cpuLimitMillicores;
 
     private Integer memoryLimitMb;
+
+    /** When true the worker also attaches the container to the egress bridge. */
+    private boolean allowInternet;
 }
