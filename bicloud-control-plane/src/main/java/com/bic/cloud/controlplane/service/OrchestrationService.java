@@ -56,6 +56,10 @@ public class OrchestrationService {
         // fire-and-return: the API answers 202 immediately, containers appear
         // as PENDING and the executor brings them to RUNNING
         for (ProjectImage image : images) {
+            if (image.isStoppedByUser()) {
+                image.setStoppedByUser(false);
+                projectImageRepository.save(image);
+            }
             deploymentService.deployAsync(image.getId());
         }
 
@@ -190,6 +194,8 @@ public class OrchestrationService {
             // config changed; the old cooldown no longer means anything
             managed.setConsecutiveDeployFailures(0);
             managed.setLastDeployFailureAt(null);
+            // an update redeploys below, so the service is live again
+            managed.setStoppedByUser(false);
             return projectImageRepository.save(managed);
         });
 
@@ -230,6 +236,7 @@ public class OrchestrationService {
         // persist the new desired state FIRST: if the worker calls fail,
         // self-healing converges to it instead of the stale count
         image.setDesiredReplicas(newReplicas);
+        image.setStoppedByUser(false);
         projectImageRepository.save(image);
 
         deploymentService.scaleAsync(imageId, newReplicas);

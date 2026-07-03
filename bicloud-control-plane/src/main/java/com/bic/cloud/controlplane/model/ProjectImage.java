@@ -64,6 +64,15 @@ public class ProjectImage {
     @Column(name = "last_deploy_failure_at")
     private Instant lastDeployFailureAt;
 
+    /**
+     * True after an explicit undeploy: self-healing must not resurrect the
+     * service. desiredReplicas keeps the configured count so a later deploy
+     * can restore it. Cleared by deploy/scale/update.
+     */
+    @Column(name = "stopped_by_user", nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private boolean stoppedByUser = false;
+
     @PrePersist
     protected void onCreate() {
         this.createdAt = LocalDateTime.now();

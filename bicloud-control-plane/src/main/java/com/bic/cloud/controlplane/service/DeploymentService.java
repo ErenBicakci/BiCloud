@@ -142,6 +142,15 @@ public class DeploymentService {
 
     public void undeployProject(Long projectId) {
 
+        // Flag FIRST: with desiredReplicas untouched, self-healing would
+        // otherwise resurrect the service ~30s after the user undeployed it.
+        for (ProjectImage image : projectImageRepository.findByProject_Id(projectId)) {
+            if (!image.isStoppedByUser()) {
+                image.setStoppedByUser(true);
+                projectImageRepository.save(image);
+            }
+        }
+
         List<ContainerInstance> running = containerInstanceRepository.findRunningByProjectId(projectId);
 
         log.info("Undeploying {} running container(s) for project {}", running.size(), projectId);

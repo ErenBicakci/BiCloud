@@ -81,8 +81,9 @@ public class SelfHealingScheduler {
 
             int desired = image.getDesiredReplicas();
 
-            // desired=0 means the user stopped the service on purpose, don't touch it
-            if (desired <= 0) {
+            // desired=0 (scaled to zero) or an explicit undeploy both mean the
+            // user stopped the service on purpose, don't touch it
+            if (desired <= 0 || image.isStoppedByUser()) {
                 continue;
             }
 
