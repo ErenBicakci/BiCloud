@@ -4,7 +4,6 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.util.Map;
 
 @Entity
@@ -49,7 +48,7 @@ public class ProjectImage {
     private Double cpuLimit;
 
     @Column(nullable = false, updatable = false)
-    private LocalDateTime createdAt;
+    private Instant createdAt;
 
 
      // self-healing backoff: consecutive failed deploy attempts. reset to 0 on success
@@ -75,6 +74,6 @@ public class ProjectImage {
 
     @PrePersist
     protected void onCreate() {
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = Instant.now();
     }
 }
