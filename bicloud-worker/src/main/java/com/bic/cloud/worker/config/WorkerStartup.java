@@ -39,7 +39,7 @@ public class WorkerStartup {
     private static final String WORKER_ID_FILE = "worker-id.txt";
     private static final int MAX_RETRY_DELAY_SECONDS = 60;
 
-    private boolean registered = false;
+    private volatile boolean registered = false;
 
     @Getter
     private UUID workerId;
