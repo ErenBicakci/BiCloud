@@ -136,6 +136,20 @@ public interface ContainerInstanceRepository extends JpaRepository<ContainerInst
     """)
     List<Object[]> sumReservedResourcesByWorker();
 
+    /**
+     * Anti-affinity input: how many live (RUNNING/PENDING) replicas of the
+     * given service each worker already hosts.
+     * Row format: [workerNodeId(UUID), replicaCount(Long)]
+     */
+    @Query("""
+        SELECT ci.workerNode.id, COUNT(ci)
+        FROM ContainerInstance ci
+        WHERE ci.projectImage.id = :imageId
+          AND ci.status IN ('RUNNING', 'PENDING')
+        GROUP BY ci.workerNode.id
+    """)
+    List<Object[]> countAliveReplicasPerWorker(@Param("imageId") Long imageId);
+
     @Query("""
         SELECT ci.status, COUNT(ci) FROM ContainerInstance ci
         WHERE ci.projectImage.project.id = :projectId

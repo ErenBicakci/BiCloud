@@ -31,6 +31,13 @@ import java.util.UUID;
  *    Kubernetes' request-based scheduling).
  *
  * The score uses the pessimistic (max usage) of the two signals.
+ *
+ * On top of that, SOFT ANTI-AFFINITY: every live replica of the service being
+ * placed that a worker already hosts subtracts a fixed penalty from that
+ * worker's score. Replicas spread across workers when possible, but a single
+ * remaining worker still gets the deploy (it merely scores lower, and max()
+ * of one candidate always wins) - the simplified version of Kubernetes'
+ * preferred pod anti-affinity.
  */
 @Slf4j
 @Service
@@ -43,6 +50,14 @@ public class WorkerScoringService {
 
     private static final double CPU_FREE_WEIGHT = 0.5;
     private static final double MEMORY_FREE_WEIGHT = 0.5;
+
+    /**
+     * Score penalty per already-hosted replica of the same service. 25 points
+     * outweighs typical load differences between two healthy workers, so the
+     * spread only collapses onto one worker when the alternatives are much
+     * busier (or gone).
+     */
+    private static final double ANTI_AFFINITY_PENALTY = 25.0;
 
     private record Reservation(long memoryMb, long cpuMillicores) {
         static final Reservation NONE = new Reservation(0, 0);
@@ -77,6 +92,11 @@ public class WorkerScoringService {
     }
 
     public Optional<WorkerNode> selectBestWorker() {
+        return selectBestWorker(null);
+    }
+
+    /** @param imageId service being placed - enables the anti-affinity penalty (null = off) */
+    public Optional<WorkerNode> selectBestWorker(Long imageId) {
 
         List<WorkerState> activeStates = stateRepository.findAll()
                 .stream()
@@ -89,14 +109,21 @@ public class WorkerScoringService {
         }
 
         Map<UUID, Reservation> reservations = loadReservations();
+        Map<UUID, Long> replicasOnWorker = loadReplicaCounts(imageId);
 
         return activeStates.stream()
                 .max(Comparator.comparingDouble(
-                        s -> calculateScore(s.getWorker(), s, reservationFor(s, reservations))))
+                        s -> placementScore(s, reservations, replicasOnWorker)))
                 .map(WorkerState::getWorker);
     }
 
     public Optional<WorkerNode> selectBestWorkerWithCapacity(int requiredCpuMillicores, long requiredMemoryMb) {
+        return selectBestWorkerWithCapacity(requiredCpuMillicores, requiredMemoryMb, null);
+    }
+
+    /** @param imageId service being placed - enables the anti-affinity penalty (null = off) */
+    public Optional<WorkerNode> selectBestWorkerWithCapacity(int requiredCpuMillicores, long requiredMemoryMb,
+                                                             Long imageId) {
 
         List<WorkerState> activeStates = stateRepository.findAll()
                 .stream()
@@ -109,6 +136,7 @@ public class WorkerScoringService {
         }
 
         Map<UUID, Reservation> reservations = loadReservations();
+        Map<UUID, Long> replicasOnWorker = loadReplicaCounts(imageId);
 
         return activeStates.stream()
                 .filter(state -> {
@@ -127,8 +155,37 @@ public class WorkerScoringService {
                     return freeMemory >= requiredMemoryMb && freeCpuMillicores >= requiredCpuMillicores;
                 })
                 .max(Comparator.comparingDouble(
-                        s -> calculateScore(s.getWorker(), s, reservationFor(s, reservations))))
+                        s -> placementScore(s, reservations, replicasOnWorker)))
                 .map(WorkerState::getWorker);
+    }
+
+    /**
+     * Resource score minus the anti-affinity penalty. May go negative - only
+     * the relative order matters, so a lone worker hosting every replica is
+     * still chosen when nothing else is available.
+     */
+    private double placementScore(WorkerState state,
+                                  Map<UUID, Reservation> reservations,
+                                  Map<UUID, Long> replicasOnWorker) {
+
+        double score = calculateScore(state.getWorker(), state, reservationFor(state, reservations));
+
+        UUID workerId = state.getWorker() != null ? state.getWorker().getId() : null;
+        long existingReplicas = workerId != null ? replicasOnWorker.getOrDefault(workerId, 0L) : 0L;
+
+        return score - (ANTI_AFFINITY_PENALTY * existingReplicas);
+    }
+
+    /** Live replicas of the image per worker; empty map when imageId is null (penalty off). */
+    private Map<UUID, Long> loadReplicaCounts(Long imageId) {
+        if (imageId == null) {
+            return Map.of();
+        }
+        Map<UUID, Long> map = new HashMap<>();
+        for (Object[] row : containerInstanceRepository.countAliveReplicasPerWorker(imageId)) {
+            map.put((UUID) row[0], ((Number) row[1]).longValue());
+        }
+        return map;
     }
 
     /**

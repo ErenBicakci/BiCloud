@@ -232,6 +232,112 @@ class WorkerScoringServiceTest {
     }
 
     // ──────────────────────────────────────────────────────────────
+    // Anti-affinity
+    // ──────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("selectBestWorker -> spreads replicas: prefers the worker not yet hosting the service")
+    void selectBestWorker_prefersWorkerWithoutReplicasOfSameService() {
+        WorkerNode secondNode = WorkerNode.builder()
+                .id(UUID.randomUUID())
+                .workerName("second-worker")
+                .totalCpuCores(8)
+                .totalMemoryMb(8192)
+                .serverPort(8082)
+                .build();
+
+        WorkerState secondState = WorkerState.builder()
+                .worker(secondNode)
+                .status(WorkerState.NodeStatus.ACTIVE)
+                .cpuUsagePercent(0)
+                .usedMemoryMb(0)
+                .build();
+
+        // both idle and identical - but test-worker already hosts 2 replicas
+        // of the service being placed
+        when(stateRepository.findAll()).thenReturn(List.of(activeState, secondState));
+        when(containerInstanceRepository.countAliveReplicasPerWorker(42L))
+                .thenReturn(List.<Object[]>of(new Object[]{node.getId(), 2L}));
+
+        Optional<WorkerNode> result = scoringService.selectBestWorker(42L);
+
+        assertThat(result).isPresent();
+        assertThat(result.get().getWorkerName()).isEqualTo("second-worker");
+    }
+
+    @Test
+    @DisplayName("selectBestWorker -> anti-affinity is soft: a much busier empty worker still loses")
+    void selectBestWorker_antiAffinityDoesNotOverrideMuchBusierWorker() {
+        WorkerNode busyNode = WorkerNode.builder()
+                .id(UUID.randomUUID())
+                .workerName("busy-empty-worker")
+                .totalCpuCores(8)
+                .totalMemoryMb(8192)
+                .serverPort(8082)
+                .build();
+
+        WorkerState busyState = WorkerState.builder()
+                .worker(busyNode)
+                .status(WorkerState.NodeStatus.ACTIVE)
+                .cpuUsagePercent(90)
+                .usedMemoryMb(7373) // ~90% -> score ~10
+                .build();
+
+        // test-worker: idle (score 100) but hosts 1 replica -> 100-25=75
+        // busy-empty-worker: no replicas but ~90% loaded -> ~10
+        when(stateRepository.findAll()).thenReturn(List.of(activeState, busyState));
+        when(containerInstanceRepository.countAliveReplicasPerWorker(42L))
+                .thenReturn(List.<Object[]>of(new Object[]{node.getId(), 1L}));
+
+        Optional<WorkerNode> result = scoringService.selectBestWorker(42L);
+
+        assertThat(result).isPresent();
+        assertThat(result.get().getWorkerName()).isEqualTo("test-worker");
+    }
+
+    @Test
+    @DisplayName("selectBestWorker -> a lone worker is still chosen even when it hosts every replica")
+    void selectBestWorker_lonWorkerStillChosenDespitePenalty() {
+        // 5 replicas -> score 100 - 125 = negative, but it is the only candidate
+        when(stateRepository.findAll()).thenReturn(List.of(activeState));
+        when(containerInstanceRepository.countAliveReplicasPerWorker(42L))
+                .thenReturn(List.<Object[]>of(new Object[]{node.getId(), 5L}));
+
+        Optional<WorkerNode> result = scoringService.selectBestWorker(42L);
+
+        assertThat(result).isPresent();
+        assertThat(result.get().getWorkerName()).isEqualTo("test-worker");
+    }
+
+    @Test
+    @DisplayName("selectBestWorkerWithCapacity -> capacity filter and anti-affinity work together")
+    void selectBestWorkerWithCapacity_appliesAntiAffinity() {
+        WorkerNode secondNode = WorkerNode.builder()
+                .id(UUID.randomUUID())
+                .workerName("second-worker")
+                .totalCpuCores(8)
+                .totalMemoryMb(8192)
+                .serverPort(8082)
+                .build();
+
+        WorkerState secondState = WorkerState.builder()
+                .worker(secondNode)
+                .status(WorkerState.NodeStatus.ACTIVE)
+                .cpuUsagePercent(0)
+                .usedMemoryMb(0)
+                .build();
+
+        when(stateRepository.findAll()).thenReturn(List.of(activeState, secondState));
+        when(containerInstanceRepository.countAliveReplicasPerWorker(42L))
+                .thenReturn(List.<Object[]>of(new Object[]{node.getId(), 1L}));
+
+        Optional<WorkerNode> result = scoringService.selectBestWorkerWithCapacity(0, 500, 42L);
+
+        assertThat(result).isPresent();
+        assertThat(result.get().getWorkerName()).isEqualTo("second-worker");
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // selectBestWorkerWithCapacity
     // ──────────────────────────────────────────────────────────────
 

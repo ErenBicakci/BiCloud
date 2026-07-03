@@ -177,8 +177,9 @@ public class DeploymentService {
                     ? request.getMemoryLimitMb() : 0;
 
             WorkerNode bestWorker = scoringService
-                    .selectBestWorkerWithCapacity(requiredCpuMillicores, requiredMemoryMb)
-                    .orElseGet(() -> scoringService.selectBestWorker()
+                    .selectBestWorkerWithCapacity(requiredCpuMillicores, requiredMemoryMb,
+                            projectImage.getId())
+                    .orElseGet(() -> scoringService.selectBestWorker(projectImage.getId())
                             .orElseThrow(() -> new NoAvailableWorkerException(
                                     "No worker available for replica " + (replicaIndex + 1)
                                             + " of " + projectImage.getServiceName())));
