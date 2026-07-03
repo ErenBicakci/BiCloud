@@ -10,7 +10,6 @@ import lombok.*;
 public class WorkerContainerCreateResponse {
 
     private String  containerId;
-    private Integer assignedPort;
 
     /**
      * The container's internal IP on the project Docker network (172.x.x.x).

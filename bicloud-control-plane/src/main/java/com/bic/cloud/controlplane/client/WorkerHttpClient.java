@@ -60,11 +60,10 @@ public class WorkerHttpClient {
                     })
                     .body(WorkerContainerCreateResponse.class);
 
-            log.info("Container created on worker {} for service={}: containerId={}, port={}",
+            log.info("Container created on worker {} for service={}: containerId={}",
                     targetWorker.getWorkerName(),
                     dto.getServiceName(),
-                    response != null ? response.getContainerId() : "null",
-                    response != null ? response.getAssignedPort() : "null");
+                    response != null ? response.getContainerId() : "null");
 
             return response;
 

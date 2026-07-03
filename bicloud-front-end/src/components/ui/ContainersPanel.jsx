@@ -117,7 +117,7 @@ export const ContainersPanel = ({ projectId, serviceName, reloadKey, onLogs, onS
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Container ID, worker, port..."
+            placeholder="Container ID, worker..."
             className="input"
             style={{ paddingLeft: 32, paddingRight: search ? 32 : 12, fontSize: '0.82rem' }}
           />

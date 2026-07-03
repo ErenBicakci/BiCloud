@@ -106,8 +106,7 @@ public interface ContainerInstanceRepository extends JpaRepository<ContainerInst
           AND (:hasStatusFilter = false OR ci.status IN :statuses)
           AND (:search IS NULL OR :search = ''
                OR LOWER(COALESCE(ci.dockerContainerId, '')) LIKE LOWER(CONCAT('%', :search, '%'))
-               OR LOWER(COALESCE(ci.workerNode.workerName, '')) LIKE LOWER(CONCAT('%', :search, '%'))
-               OR CAST(ci.assignedPort AS string) LIKE CONCAT('%', :search, '%'))
+               OR LOWER(COALESCE(ci.workerNode.workerName, '')) LIKE LOWER(CONCAT('%', :search, '%')))
     """)
     Page<ContainerInstance> searchByProject(
             @Param("projectId") Long projectId,
@@ -156,8 +155,7 @@ public interface ContainerInstanceRepository extends JpaRepository<ContainerInst
           AND (:serviceName IS NULL OR ci.projectImage.serviceName = :serviceName)
           AND (:search IS NULL OR :search = ''
                OR LOWER(COALESCE(ci.dockerContainerId, '')) LIKE LOWER(CONCAT('%', :search, '%'))
-               OR LOWER(COALESCE(ci.workerNode.workerName, '')) LIKE LOWER(CONCAT('%', :search, '%'))
-               OR CAST(ci.assignedPort AS string) LIKE CONCAT('%', :search, '%'))
+               OR LOWER(COALESCE(ci.workerNode.workerName, '')) LIKE LOWER(CONCAT('%', :search, '%')))
         GROUP BY ci.status
     """)
     List<Object[]> countByStatusForProject(

@@ -9,9 +9,6 @@ public class ContainerCreateResponse {
 
     private String  containerId;
 
-    private Integer assignedPort;
-
-
     private String containerIp;
 
     private String message;

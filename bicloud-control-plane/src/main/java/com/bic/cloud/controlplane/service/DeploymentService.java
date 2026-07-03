@@ -206,7 +206,6 @@ public class DeploymentService {
                     ContainerInstance.builder()
                             .projectImage(projectImage)
                             .workerNode(bestWorker)
-                            .assignedPort(0)
                             .status(ContainerInstance.InstanceStatus.PENDING)
                             .build());
 
@@ -215,7 +214,6 @@ public class DeploymentService {
                         workerHttpClient.createContainer(bestWorker, request);
 
                 instance.setDockerContainerId(response.getContainerId());
-                instance.setAssignedPort(response.getAssignedPort() != null ? response.getAssignedPort() : 0);
                 instance.setContainerIp(response.getContainerIp());
                 instance.setStatus(ContainerInstance.InstanceStatus.RUNNING);
                 instance.setStartedAt(Instant.now());
@@ -226,10 +224,9 @@ public class DeploymentService {
 
                 successCount++;
 
-                log.info("ContainerInstance saved: containerId={}, worker={}, port={}",
+                log.info("ContainerInstance saved: containerId={}, worker={}",
                         response.getContainerId(),
-                        bestWorker.getWorkerName(),
-                        response.getAssignedPort());
+                        bestWorker.getWorkerName());
 
             } catch (Exception e) {
                 log.error("Failed to deploy replica {}/{} of '{}' to worker '{}'",

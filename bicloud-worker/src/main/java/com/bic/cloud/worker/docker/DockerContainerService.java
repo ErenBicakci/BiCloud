@@ -107,7 +107,7 @@ public class DockerContainerService {
             log.info("Container started: name={} network={} internalIp={}",
                     containerName, networkName, containerIp);
 
-            return new ContainerCreateResponse(containerId, null, containerIp,
+            return new ContainerCreateResponse(containerId, containerIp,
                     "Container created & started successfully");
 
         } catch (RuntimeException e) {

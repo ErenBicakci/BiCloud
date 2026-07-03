@@ -34,10 +34,6 @@ public class ContainerInstance {
     @Column(nullable = false)
     private InstanceStatus status;
 
-    //no active use case for this right now
-    @Column(name = "assigned_port")
-    private Integer assignedPort;
-
     /**
      * The container's internal IP on the project Docker network (172.x.x.x).
      * The gateway routes traffic to this IP.
