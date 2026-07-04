@@ -1,6 +1,7 @@
 package com.bic.cloud.controlplane.service;
 
 import com.bic.cloud.controlplane.dto.*;
+import com.bic.cloud.controlplane.exception.InvalidWorkerIpException;
 import com.bic.cloud.controlplane.exception.WorkerNotFoundException;
 import com.bic.cloud.controlplane.model.AuditEvent;
 import com.bic.cloud.controlplane.model.ContainerInstance;
@@ -36,6 +37,8 @@ public class WorkerService {
 
     @Transactional
     public WorkerRegisterResponse register(WorkerRegisterRequest request, String clientIp) {
+        String advertisedIp = resolveAdvertisedIp(request.getIpAddress());
+        logIfAdvertisedIpDiffersFromSocket(request.getWorkerName(), advertisedIp, clientIp);
 
         WorkerNode node;
 
@@ -68,7 +71,7 @@ public class WorkerService {
                     return newState;
                 });
 
-        state.setIpAddress(clientIp);
+        state.setIpAddress(advertisedIp);
         state.setMeshIp(request.getMeshIp());
         state.setCpuUsagePercent(0);
         state.setUsedMemoryMb(0);
@@ -318,6 +321,48 @@ public class WorkerService {
                 .serverPort(request.getServerPort())
                 .build();
         return nodeRepository.save(newNode);
+    }
+
+    private String resolveAdvertisedIp(String ipAddress) {
+        String ip = ipAddress != null ? ipAddress.trim() : null;
+        if (!isValidAdvertisedIpv4(ip)) {
+            throw new InvalidWorkerIpException(ipAddress);
+        }
+        return ip;
+    }
+
+    private boolean isValidAdvertisedIpv4(String ip) {
+        if (ip == null || ip.isBlank()) return false;
+        if ("localhost".equalsIgnoreCase(ip) || "0.0.0.0".equals(ip) || ip.startsWith("127.")) return false;
+
+        String[] parts = ip.split("\\.", -1);
+        if (parts.length != 4) return false;
+
+        for (String part : parts) {
+            if (part.isBlank() || part.length() > 3) return false;
+            for (int i = 0; i < part.length(); i++) {
+                if (!Character.isDigit(part.charAt(i))) return false;
+            }
+            int value;
+            try {
+                value = Integer.parseInt(part);
+            } catch (NumberFormatException e) {
+                return false;
+            }
+            if (value < 0 || value > 255) return false;
+        }
+
+        return true;
+    }
+
+    private void logIfAdvertisedIpDiffersFromSocket(String workerName, String advertisedIp, String remoteAddr) {
+        if (remoteAddr == null || remoteAddr.isBlank()) return;
+
+        String socketIp = remoteAddr.trim();
+        if (!advertisedIp.equals(socketIp)) {
+            log.warn("worker advertised IP differs from socket IP: workerName={}, advertisedIp={}, remoteAddr={}",
+                    workerName, advertisedIp, socketIp);
+        }
     }
 
     private void auditCapacityChange(WorkerNode existing, WorkerRegisterRequest request) {
