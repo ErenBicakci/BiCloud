@@ -1,9 +1,11 @@
 package com.bic.cloud.bicloud_gateway.dto;
 
+import com.bic.cloud.bicloud_gateway.routing.RouteNameRules;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -23,14 +25,16 @@ public class DeregisterInstanceRequest {
 
     /** Project name - selects which route pool to remove from. */
     @NotBlank(message = "projectName is required")
-    @Pattern(regexp = "^[a-z0-9][a-z0-9_-]{0,62}$",
-            message = "projectName may only contain lowercase letters, digits, hyphens and underscores")
+    @Size(min = 2, max = 50, message = "projectName must be between 2 and 50 characters")
+    @Pattern(regexp = RouteNameRules.PROJECT_NAME_REGEX,
+            message = "projectName must match the control-plane project naming policy")
     private String projectName;
 
     /** Service name - fully identifies the route pool. */
     @NotBlank(message = "serviceName is required")
-    @Pattern(regexp = "^[a-z0-9][a-z0-9_-]{0,62}$",
-            message = "serviceName may only contain lowercase letters, digits, hyphens and underscores")
+    @Size(min = 2, max = 50, message = "serviceName must be between 2 and 50 characters")
+    @Pattern(regexp = RouteNameRules.SERVICE_NAME_REGEX,
+            message = "serviceName must match the control-plane service naming policy")
     private String serviceName;
 
     /** Docker internal IP of the container to remove. */

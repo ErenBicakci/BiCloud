@@ -262,6 +262,7 @@ public class GatewayNetworkManager {
             List<Network> networks = dockerClient.listNetworksCmd().exec().stream()
                     .filter(n -> n.getName().startsWith(NETWORK_PREFIX))
                     .filter(n -> !EXCLUDED_NETWORKS.contains(n.getName()))
+                    .filter(n -> !n.getName().startsWith(EGRESS_PREFIX))
                     .toList();
 
             for (Network n : networks) {

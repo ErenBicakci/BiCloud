@@ -63,7 +63,10 @@ public class ApiKeySecurityFilter implements WebFilter {
 
     private boolean requiresAuth(String path) {
         if (path.equals("/gateway/health")) return false;
-        if (path.startsWith("/actuator/"))   return false;
-        return path.startsWith("/gateway/");
+        if (path.equals("/actuator") || path.equals("/actuator/")) return true;
+        if (path.equals("/actuator/health") || path.startsWith("/actuator/health/")) return false;
+        if (path.equals("/actuator/info")) return false;
+        if (path.startsWith("/actuator/")) return true;
+        return path.equals("/gateway") || path.startsWith("/gateway/");
     }
 }

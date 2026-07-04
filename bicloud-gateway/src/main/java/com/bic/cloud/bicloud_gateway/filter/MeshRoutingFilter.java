@@ -5,6 +5,7 @@ import com.bic.cloud.bicloud_gateway.docker.GatewayNetworkManager;
 import com.bic.cloud.bicloud_gateway.dto.MeshEndpointDto;
 import com.bic.cloud.bicloud_gateway.model.ServiceInstance;
 import com.bic.cloud.bicloud_gateway.registry.RouteRegistry;
+import com.bic.cloud.bicloud_gateway.routing.RouteNameRules;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,6 +22,7 @@ import reactor.core.publisher.Mono;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
@@ -90,7 +92,16 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
                     "Expected format: /_bicloud/mesh/{project}/{service}/...");
         }
 
-        int hops = parseHops(exchange);
+        String hopsHeader = exchange.getRequest().getHeaders().getFirst(HOPS_HEADER);
+        boolean gatewayHop = hopsHeader != null;
+        int hops = gatewayHop ? parseHops(hopsHeader) : 0;
+
+        if (gatewayHop && !isTrustedGatewayHop(exchange, hops)) {
+            log.warn("[Mesh] Forged or invalid gateway hop rejected: {}/{}",
+                    target.project(), target.service());
+            return writeError(exchange, HttpStatus.FORBIDDEN, "FORBIDDEN",
+                    "Gateway identity could not be verified.");
+        }
         if (hops >= MAX_HOPS) {
             log.error("[Mesh] Hop limit ({}) exceeded: {}/{}", MAX_HOPS, target.project(), target.service());
             return writeError(exchange, HttpStatus.LOOP_DETECTED, "MESH_HOP_LIMIT",
@@ -98,17 +109,7 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
         }
 
         // ── Tenant isolation ───────────────────────────────────────────────
-        if (hops > 0) {
-            // hop from another gateway: first prove it really came from a gateway
-            // (so a tenant container cannot forge the hops header).
-            String key = exchange.getRequest().getHeaders().getFirst(GATEWAY_KEY_HEADER);
-            if (!gatewayApiKey.equals(key)) {
-                log.warn("[Mesh] Hop request with invalid gateway key rejected: {}/{}",
-                        target.project(), target.service());
-                return writeError(exchange, HttpStatus.FORBIDDEN, "FORBIDDEN",
-                        "Gateway identity could not be verified.");
-            }
-
+        if (gatewayHop) {
             // the caller project verified by the first gateway must equal the target project.
             String callerProject = exchange.getRequest().getHeaders().getFirst(CALLER_PROJECT_HEADER);
             if (callerProject == null || !callerProject.equalsIgnoreCase(target.project())) {
@@ -146,7 +147,7 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
 
         // 2) arrived remotely but there is no local instance -> do NOT forward again (loop risk).
         //    the instance died between the CP's response and the request arriving.
-        if (hops > 0) {
+        if (gatewayHop) {
             log.warn("[Mesh] No local instance for a remote request: {}/{}",
                     target.project(), target.service());
             return writeError(exchange, HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE",
@@ -237,6 +238,10 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
         if (service.isEmpty()) return null;
 
         String subPath = secondSlash < 0 ? "" : afterProject.substring(secondSlash);
+        if (!RouteNameRules.isProjectName(project) || !RouteNameRules.isServiceName(service)) {
+            return null;
+        }
+
         return new MeshTarget(project, service, subPath);
     }
 
@@ -247,14 +252,31 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
         return remote.getAddress().getHostAddress();
     }
 
-    private int parseHops(ServerWebExchange exchange) {
-        String value = exchange.getRequest().getHeaders().getFirst(HOPS_HEADER);
-        if (value == null) return 0;
+    private int parseHops(String value) {
         try {
-            return Math.max(0, Integer.parseInt(value));
+            return Integer.parseInt(value);
         } catch (NumberFormatException e) {
-            return 0;
+            return -1;
         }
+    }
+
+    private boolean isTrustedGatewayHop(ServerWebExchange exchange, int hops) {
+        if (hops <= 0) return false;
+
+        String key = exchange.getRequest().getHeaders().getFirst(GATEWAY_KEY_HEADER);
+        if (key == null || !MessageDigest.isEqual(
+                key.getBytes(StandardCharsets.UTF_8),
+                gatewayApiKey.getBytes(StandardCharsets.UTF_8))) {
+            return false;
+        }
+
+        String callerIp = remoteIp(exchange);
+        if (callerIp == null) return false;
+
+        // Tenant containers live inside bicloud-{project} subnets. Even if an
+        // app forwards internal headers, that request must remain a first-hop
+        // tenant request and cannot become a trusted gateway-to-gateway hop.
+        return networkManager.projectForIp(callerIp).isEmpty();
     }
 
     private Mono<Void> writeError(ServerWebExchange exchange,

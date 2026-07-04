@@ -4,6 +4,7 @@ import com.bic.cloud.bicloud_gateway.client.ControlPlaneDiscoveryClient;
 import com.bic.cloud.bicloud_gateway.dto.MeshEndpointDto;
 import com.bic.cloud.bicloud_gateway.model.ServiceInstance;
 import com.bic.cloud.bicloud_gateway.registry.RouteRegistry;
+import com.bic.cloud.bicloud_gateway.routing.RouteNameRules;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,6 +22,8 @@ import reactor.core.publisher.Mono;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Locale;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
@@ -46,6 +49,10 @@ public class DynamicRoutingFilter implements GlobalFilter, Ordered {
     /** Host port of the gateways on other machines. */
     @Value("${bicloud.gateway.port:9000}")
     private int remoteGatewayPort;
+
+    /** Shared identity used only for gateway-stamped hop headers. */
+    @Value("${bicloud.gateway.api-key}")
+    private String gatewayApiKey;
 
     @Override
     public int getOrder() {
@@ -94,7 +101,7 @@ public class DynamicRoutingFilter implements GlobalFilter, Ordered {
 
         exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_REQUEST_URL_ATTR, targetUri);
 
-        return chain.filter(exchange);
+        return chain.filter(stripInternalHeaders(exchange));
     }
 
     /**
@@ -110,7 +117,7 @@ public class DynamicRoutingFilter implements GlobalFilter, Ordered {
                                               GatewayFilterChain chain,
                                               ParsedHost host) {
         String hopsValue = exchange.getRequest().getHeaders().getFirst(MeshRoutingFilter.HOPS_HEADER);
-        if (hopsValue != null) {
+        if (hopsValue != null && isTrustedGatewayHop(exchange)) {
             log.warn("No local instance for a remote request -> 503 | route=[{}:{}]",
                     host.project(), host.service());
             return writeError(exchange, HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE",
@@ -154,8 +161,13 @@ public class DynamicRoutingFilter implements GlobalFilter, Ordered {
                             host.project(), host.service());
 
                     ServerWebExchange mutated = exchange.mutate()
-                            .request(r -> r.headers(h ->
-                                    h.set(MeshRoutingFilter.HOPS_HEADER, "1")))
+                            .request(r -> r.headers(h -> {
+                                h.remove(MeshRoutingFilter.HOPS_HEADER);
+                                h.remove(MeshRoutingFilter.GATEWAY_KEY_HEADER);
+                                h.remove(MeshRoutingFilter.CALLER_PROJECT_HEADER);
+                                h.set(MeshRoutingFilter.HOPS_HEADER, "1");
+                                h.set(MeshRoutingFilter.GATEWAY_KEY_HEADER, gatewayApiKey);
+                            }))
                             .build();
                     mutated.getAttributes().put(ServerWebExchangeUtils.GATEWAY_REQUEST_URL_ATTR, targetUri);
                     // the target gateway resolves the route from the Host header - Host must be preserved
@@ -186,6 +198,7 @@ public class DynamicRoutingFilter implements GlobalFilter, Ordered {
 
         // Strip port if present: "api.customer1.bicloud.local:9000" -> "api.customer1.bicloud.local"
         String h = rawHost.contains(":") ? rawHost.substring(0, rawHost.indexOf(':')) : rawHost;
+        h = h.toLowerCase(Locale.ROOT);
 
         if (!h.endsWith(HOST_SUFFIX)) return null;
 
@@ -199,7 +212,39 @@ public class DynamicRoutingFilter implements GlobalFilter, Ordered {
         String service = stripped.substring(0, dot);
         String project = stripped.substring(dot + 1);
 
+        if (!RouteNameRules.isProjectName(project) || !RouteNameRules.isServiceName(service)) {
+            return null;
+        }
+
         return new ParsedHost(project, service);
+    }
+
+    private boolean isTrustedGatewayHop(ServerWebExchange exchange) {
+        String hops = exchange.getRequest().getHeaders().getFirst(MeshRoutingFilter.HOPS_HEADER);
+        if (parseHops(hops) <= 0) return false;
+
+        String key = exchange.getRequest().getHeaders().getFirst(MeshRoutingFilter.GATEWAY_KEY_HEADER);
+        return key != null && MessageDigest.isEqual(
+                key.getBytes(StandardCharsets.UTF_8),
+                gatewayApiKey.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private int parseHops(String value) {
+        try {
+            return Integer.parseInt(value);
+        } catch (RuntimeException e) {
+            return -1;
+        }
+    }
+
+    private ServerWebExchange stripInternalHeaders(ServerWebExchange exchange) {
+        return exchange.mutate()
+                .request(r -> r.headers(h -> {
+                    h.remove(MeshRoutingFilter.GATEWAY_KEY_HEADER);
+                    h.remove(MeshRoutingFilter.CALLER_PROJECT_HEADER);
+                    h.remove(MeshRoutingFilter.HOPS_HEADER);
+                }))
+                .build();
     }
 
     private Mono<Void> writeError(ServerWebExchange exchange,
