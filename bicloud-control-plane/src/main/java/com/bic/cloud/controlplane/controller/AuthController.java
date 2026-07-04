@@ -33,6 +33,7 @@ public class AuthController {
     }
 
     @GetMapping("/me")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<UserResponse> me(@AuthenticationPrincipal BicloudUserDetails caller) {
         return ResponseEntity.ok(authService.getMe(caller));
     }

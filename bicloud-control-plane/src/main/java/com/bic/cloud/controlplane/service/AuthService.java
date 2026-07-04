@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -48,6 +49,10 @@ public class AuthService {
     }
 
     public UserResponse getMe(BicloudUserDetails caller) {
+        if (caller == null) {
+            throw new AccessDeniedException("Authentication required");
+        }
+
         BicloudUser user = userRepository.findById(caller.getId())
                 .orElseThrow();
         return new UserResponse(user.getId(), user.getUsername(), user.getRole(), user.getCreatedAt());
