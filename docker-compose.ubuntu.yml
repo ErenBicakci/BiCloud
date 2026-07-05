@@ -38,9 +38,9 @@ services:
       BICLOUD_GATEWAY_API_KEY:        ${BICLOUD_GATEWAY_API_KEY:?see .env.example}
       BICLOUD_GATEWAY_CONTAINER_NAME: bicloud-gateway
       # connect to the Docker daemon over TCP via the socket-proxy
-      BICLOUD_GATEWAY_DOCKER_HOST:    tcp://bicloud-socket-proxy:2375
+      BICLOUD_GATEWAY_DOCKER_HOST:    ${BICLOUD_GATEWAY_DOCKER_HOST:-tcp://bicloud-socket-proxy:2375}
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/gateway/health || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/gateway/health >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
