@@ -18,6 +18,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/workers")
 @RequiredArgsConstructor
+@PreAuthorize("hasRole('ADMIN')")
 public class WorkerViewController {
 
     private final WorkerService workerService;
@@ -39,7 +40,6 @@ public class WorkerViewController {
      * first heartbeat).
      */
     @PutMapping("/{workerId}/maintenance")
-    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<WorkerNodeDetailResponse> setMaintenance(
             @PathVariable UUID workerId,
             @RequestParam boolean enabled,

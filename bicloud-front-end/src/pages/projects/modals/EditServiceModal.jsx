@@ -19,6 +19,12 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 
+const SERVICE_LIMITS = {
+  port: { label: 'Container port', min: 1, max: 65535 },
+  memory: { label: 'Memory', min: 64, max: 4096 },
+  cpu: { label: 'CPU', min: 0.1, max: 4.0 },
+};
+
 export const EditServiceModal = ({ service, isOpen, onClose, onSuccess }) => {
   if (!isOpen || !service) return null;
   return <EditServiceForm service={service} onClose={onClose} onSuccess={onSuccess} />;
@@ -54,6 +60,15 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
 
     if (!form.imageName.trim()) return setError('Docker image name is required.');
 
+    const containerPort = parseIntegerInRange(form.containerPort, SERVICE_LIMITS.port);
+    if (containerPort.error) return setError(containerPort.error);
+
+    const memoryLimitMb = parseIntegerInRange(form.memoryLimitMb, SERVICE_LIMITS.memory);
+    if (memoryLimitMb.error) return setError(memoryLimitMb.error);
+
+    const cpuLimit = parseDecimalInRange(form.cpuLimit, SERVICE_LIMITS.cpu);
+    if (cpuLimit.error) return setError(cpuLimit.error);
+
     const entries = envEditorRef.current?.commit();
     if (entries === null) return;
 
@@ -69,9 +84,9 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
     try {
       await projectService.updateImage(service.id, {
         imageName: form.imageName.trim(),
-        containerPort: parseInt(form.containerPort, 10),
-        memoryLimitMb: parseInt(form.memoryLimitMb, 10),
-        cpuLimit: parseFloat(form.cpuLimit),
+        containerPort: containerPort.value,
+        memoryLimitMb: memoryLimitMb.value,
+        cpuLimit: cpuLimit.value,
         environmentVariables: envMap,
         allowInternet: isAdmin ? allowInternet : (service.allowInternet ?? false),
         exposeExternally,
@@ -116,8 +131,8 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
                   label="Container port"
                   name="containerPort"
                   type="number"
-                  min="1"
-                  max="65535"
+                  min={SERVICE_LIMITS.port.min}
+                  max={SERVICE_LIMITS.port.max}
                   value={form.containerPort}
                   onChange={handleChange}
                   icon={Network}
@@ -126,7 +141,8 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
                   label="Memory (MB)"
                   name="memoryLimitMb"
                   type="number"
-                  min="32"
+                  min={SERVICE_LIMITS.memory.min}
+                  max={SERVICE_LIMITS.memory.max}
                   value={form.memoryLimitMb}
                   onChange={handleChange}
                   icon={HardDrive}
@@ -135,7 +151,8 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
                   label="CPU (core)"
                   name="cpuLimit"
                   type="number"
-                  min="0.1"
+                  min={SERVICE_LIMITS.cpu.min}
+                  max={SERVICE_LIMITS.cpu.max}
                   step="0.1"
                   value={form.cpuLimit}
                   onChange={handleChange}
@@ -256,3 +273,27 @@ const ReviewRow = ({ label, value }) => (
     <div className="review-value" title={String(value)}>{value}</div>
   </div>
 );
+
+const parseIntegerInRange = (raw, limit) => {
+  const text = String(raw ?? '').trim();
+  const value = Number(text);
+
+  if (!text) return { error: `${limit.label} is required.` };
+  if (!Number.isInteger(value)) return { error: `${limit.label} must be a whole number.` };
+  if (value < limit.min || value > limit.max) {
+    return { error: `${limit.label} must be between ${limit.min} and ${limit.max}.` };
+  }
+  return { value };
+};
+
+const parseDecimalInRange = (raw, limit) => {
+  const text = String(raw ?? '').trim();
+  const value = Number(text);
+
+  if (!text) return { error: `${limit.label} is required.` };
+  if (!Number.isFinite(value)) return { error: `${limit.label} must be a number.` };
+  if (value < limit.min || value > limit.max) {
+    return { error: `${limit.label} must be between ${limit.min} and ${limit.max}.` };
+  }
+  return { value };
+};

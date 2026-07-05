@@ -1,10 +1,12 @@
 package com.bic.cloud.controlplane.security;
 
 import com.bic.cloud.controlplane.controller.AuthController;
+import com.bic.cloud.controlplane.controller.WorkerViewController;
 import com.bic.cloud.controlplane.dto.auth.AuthResponse;
 import com.bic.cloud.controlplane.dto.auth.LoginRequest;
 import com.bic.cloud.controlplane.dto.auth.RegisterRequest;
 import com.bic.cloud.controlplane.service.AuthService;
+import com.bic.cloud.controlplane.service.WorkerService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +19,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -31,6 +34,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @WebMvcTest(controllers = {
         AuthController.class,
+        WorkerViewController.class,
         SecurityConfigTest.TestActuatorController.class
 })
 @Import({SecurityConfig.class, JwtAuthFilter.class})
@@ -41,6 +45,9 @@ class SecurityConfigTest {
 
     @MockBean
     private AuthService authService;
+
+    @MockBean
+    private WorkerService workerService;
 
     @MockBean
     private JwtUtil jwtUtil;
@@ -131,6 +138,38 @@ class SecurityConfigTest {
         mockMvc.perform(get("/auth/debug"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    @Test
+    @DisplayName("GET /workers requires authentication")
+    void workersRequireAuthentication() throws Exception {
+        mockMvc.perform(get("/workers"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+
+        verify(workerService, never()).listAllWorkers();
+    }
+
+    @Test
+    @WithMockUser(roles = "USER")
+    @DisplayName("GET /workers rejects non-admin users")
+    void workersRejectNonAdminUsers() throws Exception {
+        mockMvc.perform(get("/workers"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+        verify(workerService, never()).listAllWorkers();
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    @DisplayName("GET /workers allows admins")
+    void workersAllowAdmins() throws Exception {
+        when(workerService.listAllWorkers()).thenReturn(List.of());
+
+        mockMvc.perform(get("/workers"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray());
     }
 
     @Test
