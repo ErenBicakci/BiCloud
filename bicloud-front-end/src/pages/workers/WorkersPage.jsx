@@ -214,9 +214,8 @@ const WorkerCard = ({ worker, now, isAdmin, onToggleMaintenance, onOpen }) => {
       </div>
 
       <div className="worker-card-network">
-        <NetworkFact label="Node IP" value={worker.ipAddress || '-'} />
-        <NetworkFact label="Mesh IP" value={worker.meshIp || '-'} />
-        <NetworkFact label="Port" value={worker.serverPort ?? '-'} />
+        <NetworkFact label="Advertised IP" value={worker.ipAddress || '-'} />
+        <NetworkFact label="API Port" value={worker.serverPort ?? '-'} />
       </div>
 
       <div className="worker-card-actions">

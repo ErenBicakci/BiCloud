@@ -164,9 +164,9 @@ export default function WorkerDetailPage() {
         {/* Network Info */}
         <Card>
           <SectionTitle icon={Network}>Network Info</SectionTitle>
-          <KvRow icon={Globe}   label="IP Address"   value={worker.ipAddress || '—'} mono />
-          <KvRow icon={Wifi}    label="Mesh IP"     value={worker.meshIp || '—'} mono />
-          <KvRow icon={Server}  label="Server Port" value={worker.serverPort ?? '—'} mono />
+          <KvRow icon={Globe}   label="Advertised IP" value={worker.ipAddress || '—'} mono />
+          {worker.meshIp && <KvRow icon={Wifi} label="Mesh Address" value={worker.meshIp} mono />}
+          <KvRow icon={Server}  label="API Port"      value={worker.serverPort ?? '—'} mono />
         </Card>
 
         {/* Meta */}
