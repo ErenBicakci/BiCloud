@@ -29,6 +29,8 @@ public class DockerContainerService {
     static final String LABEL_PORT    = "bicloud.port";
     static final String LABEL_MANAGED = "bicloud.managed";
     static final String LABEL_MANAGED_VALUE = "true";
+    private static final int MIN_LOG_TAIL_LINES = 1;
+    private static final int MAX_LOG_TAIL_LINES = 1000;
 
     private final DockerClient         dockerClient;
     private final DockerNetworkService dockerNetworkService;
@@ -201,11 +203,12 @@ public class DockerContainerService {
     }
 
     public String getContainerLogs(String containerId, int tailLines) {
+        int safeTailLines = clampLogTail(tailLines);
         try {
             StringBuilder logs = new StringBuilder();
             dockerClient.logContainerCmd(containerId)
                     .withStdOut(true).withStdErr(true)
-                    .withTail(tailLines).withTimestamps(true)
+                    .withTail(safeTailLines).withTimestamps(true)
                     .exec(new com.github.dockerjava.api.async.ResultCallback.Adapter<Frame>() {
                         @Override public void onNext(Frame f) { logs.append(new String(f.getPayload())); }
                     })
@@ -214,6 +217,10 @@ public class DockerContainerService {
         } catch (Exception e) {
             throw new DockerOperationException(containerId, "logs", e);
         }
+    }
+
+    private int clampLogTail(int tailLines) {
+        return Math.min(Math.max(tailLines, MIN_LOG_TAIL_LINES), MAX_LOG_TAIL_LINES);
     }
 
     public List<Container> listManagedContainers() {

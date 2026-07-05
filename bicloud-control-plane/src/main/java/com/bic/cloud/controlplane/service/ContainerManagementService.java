@@ -45,6 +45,8 @@ public class ContainerManagementService {
     private static final Set<String> ALLOWED_SORT_FIELDS = Set.of("createdAt", "status", "workerName");
     private static final String DEFAULT_SORT_FIELD = "createdAt";
     private static final int MAX_PAGE_SIZE = 200;
+    private static final int MIN_LOG_TAIL_LINES = 1;
+    private static final int MAX_LOG_TAIL_LINES = 1000;
 
     // Listing & Search
 
@@ -217,9 +219,10 @@ public class ContainerManagementService {
         ContainerInstance instance = findInstanceOrThrow(instanceId);
         projectService.assertOwnerOrAdmin(instance.getProjectImage().getProject(), caller);
 
-        log.debug("Fetching logs for container {} (tail={})", instance.getDockerContainerId(), tailLines);
+        int safeTailLines = clampLogTail(tailLines);
+        log.debug("Fetching logs for container {} (tail={})", instance.getDockerContainerId(), safeTailLines);
         return workerHttpClient.getContainerLogs(
-                instance.getWorkerNode(), instance.getDockerContainerId(), tailLines);
+                instance.getWorkerNode(), instance.getDockerContainerId(), safeTailLines);
     }
 
     // Helpers
@@ -278,6 +281,10 @@ public class ContainerManagementService {
     private ContainerInstance findInstanceOrThrow(UUID instanceId) {
         return containerInstanceRepository.findById(instanceId)
                 .orElseThrow(() -> new ContainerInstanceNotFoundException(instanceId));
+    }
+
+    private int clampLogTail(int tailLines) {
+        return Math.min(Math.max(tailLines, MIN_LOG_TAIL_LINES), MAX_LOG_TAIL_LINES);
     }
 
     // maps a ContainerInstance entity to the DTO sent to the frontend

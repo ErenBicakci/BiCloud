@@ -20,6 +20,8 @@ import { authService } from '../../services/auth.service';
 import { extractError } from '../../utils/common';
 import { Button, Input } from '../../components/ui';
 
+const REGISTER_PASSWORD_MIN_LENGTH = 8;
+
 const LoginPage = () => {
   const { login } = useAuth();
   const { success } = useToast();
@@ -38,7 +40,10 @@ const LoginPage = () => {
 
   const validate = () => {
     if (!form.username.trim()) return 'Username is required.';
-    if (form.password.length < 6) return 'Password must be at least 6 characters.';
+    if (!form.password) return 'Password is required.';
+    if (!isLogin && form.password.length < REGISTER_PASSWORD_MIN_LENGTH) {
+      return `Password must be at least ${REGISTER_PASSWORD_MIN_LENGTH} characters.`;
+    }
     return null;
   };
 
@@ -158,7 +163,8 @@ const LoginPage = () => {
               value={form.password}
               onChange={handleInputChange}
               icon={LockKeyhole}
-              autoComplete="new-password"
+              minLength={isLogin ? undefined : REGISTER_PASSWORD_MIN_LENGTH}
+              autoComplete={isLogin ? 'current-password' : 'new-password'}
             />
 
             <Button type="submit" loading={loading} className="auth-submit">
