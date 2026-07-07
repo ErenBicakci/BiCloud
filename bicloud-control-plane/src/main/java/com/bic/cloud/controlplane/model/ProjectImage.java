@@ -37,6 +37,37 @@ public class ProjectImage {
     @Column(nullable = false)
     private int desiredReplicas;
 
+    @Column(name = "autoscaling_enabled", nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private boolean autoscalingEnabled = false;
+
+    @Column(name = "min_replicas", nullable = false, columnDefinition = "integer default 1")
+    @Builder.Default
+    private int minReplicas = 1;
+
+    @Column(name = "max_replicas", nullable = false, columnDefinition = "integer default 3")
+    @Builder.Default
+    private int maxReplicas = 3;
+
+    @Column(name = "target_cpu_percent", nullable = false, columnDefinition = "integer default 70")
+    @Builder.Default
+    private int targetCpuPercent = 70;
+
+    @Column(name = "scale_down_cpu_percent", nullable = false, columnDefinition = "integer default 30")
+    @Builder.Default
+    private int scaleDownCpuPercent = 30;
+
+    @Column(name = "scale_up_cooldown_seconds", nullable = false, columnDefinition = "integer default 60")
+    @Builder.Default
+    private int scaleUpCooldownSeconds = 60;
+
+    @Column(name = "scale_down_cooldown_seconds", nullable = false, columnDefinition = "integer default 300")
+    @Builder.Default
+    private int scaleDownCooldownSeconds = 300;
+
+    @Column(name = "last_autoscaled_at")
+    private Instant lastAutoscaledAt;
+
     @Column(nullable = false)
     private int containerPort;
 
