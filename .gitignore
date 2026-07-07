@@ -39,8 +39,6 @@ Thumbs.db
 *.pem
 bicloud-registry-certs/
 
-# --- Dahili calisma notlari (repo disi) ---
-CODE_REVIEW.md
-URETIM_MIMARISI_VE_GELECEK_CALISMALAR.md
-PROJE_DEGERLENDIRME_RAPORU.md
+# --- Dahili dokumantasyon notlari (repo disi) ---
 docs/
+Docs/
