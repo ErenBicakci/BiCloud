@@ -11,7 +11,10 @@ spring.task.scheduling.pool.size=4
 worker.container-snapshot-interval-ms=15000
 worker.container-snapshot-initial-delay-ms=15000
 
-docker.host=unix:///var/run/docker.sock
+# Windows Docker Desktop:
+docker.host=npipe:////./pipe/docker_engine
+# Ubuntu/Linux:
+# docker.host=unix:///var/run/docker.sock
 worker.name=worker-1
 # If left blank, WorkerAddressResolver auto-detects it
 # (the IP of the interface towards the control plane)

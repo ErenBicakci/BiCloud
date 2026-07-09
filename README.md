@@ -62,6 +62,8 @@ With BiCloud:
 - **Project and service management:** Create/delete projects, add/update/delete
   services, deploy projects, undeploy projects, and reset service failure state.
 - **Replica management:** Services can be scaled between 0 and 10 replicas.
+- **CPU-based autoscaling:** Services can define min/max replicas, CPU
+  thresholds, and scale-up/scale-down cooldowns.
 - **Resource limits:** Services define memory and CPU limits.
 - **Environment variables:** Services can define environment variables. The
   `BICLOUD_` prefix is reserved for platform-managed values.
@@ -147,7 +149,7 @@ plane discovery endpoint when a request must be forwarded to another machine.
 | `bicloud-worker` | Java 21, Spring Boot, docker-java | Per-machine Docker container lifecycle, networks, logs, metrics, heartbeat |
 | `bicloud-gateway` | Java 21, Spring Cloud Gateway, WebFlux, docker-java | Dynamic routing, round-robin load balancing, mesh routing, gateway resync |
 | `bicloud-front-end` | React 19, Vite, Axios, React Router | User and admin management UI |
-| `deploy-ubuntu` | Docker Compose + native worker jar | Ubuntu worker-node deployment package |
+| Compose files | Docker Compose | Role/OS-specific gateway and PostgreSQL startup |
 
 ### Repository Layout
 
@@ -157,11 +159,12 @@ plane discovery endpoint when a request must be forwarded to another machine.
 |-- bicloud-worker/          # Worker node agent
 |-- bicloud-gateway/         # Dynamic gateway and mesh proxy
 |-- bicloud-front-end/       # React SPA
-|-- deploy-ubuntu/           # Ubuntu node deployment files
 |-- docs/                    # Architecture, review, and security notes
-|-- docker-compose.yml       # Gateway container for local/default setup
-|-- docker-compose.ubuntu.yml# Ubuntu gateway + socket-proxy setup
-|-- .env.example             # Example compose environment variables
+|-- docker-compose.main-windows.yml  # Main/control-plane Windows PC: PostgreSQL + gateway
+|-- docker-compose.main-ubuntu.yml   # Main/control-plane Ubuntu PC: PostgreSQL + socket-proxy + gateway
+|-- docker-compose.worker-windows.yml# Worker Windows PC: gateway only
+|-- docker-compose.worker-ubuntu.yml # Worker Ubuntu PC: socket-proxy + gateway only
+|-- .env.*.example           # Role/OS-specific compose environment examples
 `-- README.md
 ```
 
@@ -230,13 +233,33 @@ available, scheduling can still place all replicas there.
 - **Delete project/service:** Containers are stopped first, then database records
   are deleted.
 
-### 5. Self-Healing and Reconciliation
+### 5. Autoscaling
+
+Autoscaling is configured per service. When enabled, each autoscaler round
+samples fresh container CPU metrics, normalizes CPU usage against the configured
+`cpuLimit`, and stores one service-level CPU sample: the average normalized CPU
+across that service's currently running replicas. Scale decisions use the
+average of the last 4 service-level samples, so a short spike does not
+immediately change replica count.
+
+- If the 4-sample average CPU is above `targetCpuPercent`, BiCloud scales up by
+  one replica after the scale-up cooldown has elapsed.
+- If the 4-sample average CPU is below `scaleDownCpuPercent`, BiCloud scales
+  down by one replica after the scale-down cooldown has elapsed.
+- If a replica is already `PENDING`, autoscaling waits for deployment to settle
+  before making another decision.
+- Self-healing still owns convergence: autoscaling changes desired state, then
+  deployment/self-healing reconciles actual containers to that target.
+
+### 6. Self-Healing and Reconciliation
 
 The control plane runs several background loops:
 
 - Worker health check: every 20 seconds, stale worker heartbeats are detected.
 - Self-healing: every 30 seconds, desired replica counts are compared with
   current `RUNNING`/`PENDING` counts.
+- Autoscaling: every 30 seconds, services with autoscaling enabled are evaluated
+  against recent CPU metrics.
 - Metrics cleanup: silent metric series are removed after 10 minutes.
 
 The worker runs:
@@ -276,28 +299,47 @@ Default ports:
 
 ### 1. Start PostgreSQL
 
-For local development, PostgreSQL can be started with Docker:
+For local development on the main Windows PC, PostgreSQL can be started with:
 
 ```powershell
-docker run --name bicloud-postgres `
-  -e POSTGRES_DB=bicloud `
-  -e POSTGRES_USER=postgres `
-  -e POSTGRES_PASSWORD=postgres `
-  -p 5432:5432 `
-  -d postgres:16
+Copy-Item .env.main-windows.example .env
+docker compose -f docker-compose.main-windows.yml up -d bicloud-postgres
 ```
+
+Default local connection details:
+
+```text
+Host: localhost
+Port: 5432
+Database: bicloud
+Username: postgres
+Password: postgres
+```
+
+The data is stored in the named Docker volume `bicloud-postgres-data`.
 
 If you use an existing PostgreSQL installation, create a database named
 `bicloud`.
 
 ### 2. Create Configuration Files
 
-Copy the example files into real configuration files.
+Copy the example files into real configuration files. Choose the `.env`
+example that matches the current machine:
+
+| Machine | Env example |
+| --- | --- |
+| Main Windows PC | `.env.main-windows.example` |
+| Main Ubuntu PC | `.env.main-ubuntu.example` |
+| Worker Windows PC | `.env.worker-windows.example` |
+| Worker Ubuntu PC | `.env.worker-ubuntu.example` |
+
+If you already copied `.env` while starting PostgreSQL, you do not need to copy
+it again.
 
 PowerShell:
 
 ```powershell
-Copy-Item .env.example .env
+Copy-Item .env.main-windows.example .env
 Copy-Item bicloud-control-plane\src\main\resources\application.properties.example `
   bicloud-control-plane\src\main\resources\application.properties
 Copy-Item bicloud-worker\src\main\resources\application.properties.example `
@@ -309,7 +351,7 @@ Copy-Item bicloud-gateway\src\main\resources\application.properties.example `
 Bash:
 
 ```bash
-cp .env.example .env
+cp .env.main-ubuntu.example .env
 cp bicloud-control-plane/src/main/resources/application.properties.example \
    bicloud-control-plane/src/main/resources/application.properties
 cp bicloud-worker/src/main/resources/application.properties.example \
@@ -346,11 +388,11 @@ server.port=8081
 worker.name=worker-1
 worker.control-plane-url=http://CONTROL_PLANE_IP:8080
 
-# Linux:
-docker.host=unix:///var/run/docker.sock
+# Windows Docker Desktop:
+docker.host=npipe:////./pipe/docker_engine
 
-# Windows Docker Desktop alternative:
-# docker.host=npipe:////./pipe/docker_engine
+# Ubuntu/Linux:
+# docker.host=unix:///var/run/docker.sock
 
 # Must match control-plane bicloud.api-key.
 bicloud.api-key=CHANGE_ME_WORKER_CP_KEY
@@ -373,10 +415,11 @@ bicloud.control-plane.url=http://CONTROL_PLANE_IP:8080
 bicloud.control-plane.api-key=CHANGE_ME_WORKER_CP_KEY
 ```
 
-Root `.env` is used by the gateway compose file:
+The machine-local `.env` is used by the selected compose file:
 
 ```env
 BICLOUD_CONTROL_PLANE_URL=http://CONTROL_PLANE_IP:8080
+BICLOUD_CONTROL_PLANE_API_KEY=CHANGE_ME_WORKER_CP_KEY
 BICLOUD_GATEWAY_API_KEY=CHANGE_ME_GATEWAY_KEY
 ```
 
@@ -384,9 +427,8 @@ Spring Boot relaxed binding maps environment variables such as
 `BICLOUD_CONTROL_PLANE_URL` to `bicloud.control-plane.url` and
 `BICLOUD_GATEWAY_API_KEY` to `bicloud.gateway.api-key`.
 
-The gateway also needs `bicloud.control-plane.api-key` for control-plane
-discovery calls. You can set it in `application.properties` or pass
-`BICLOUD_CONTROL_PLANE_API_KEY` through the gateway environment.
+`BICLOUD_CONTROL_PLANE_API_KEY` maps to `bicloud.control-plane.api-key`; the
+gateway uses it for control-plane discovery and resync calls.
 
 ### 4. Run the Services in Development Mode
 
@@ -421,11 +463,12 @@ cd bicloud-worker
 On startup, the worker registers with the control plane and writes its stable
 ID to `worker-id.txt`. On restart, it reuses the same worker identity.
 
-#### Gateway
+#### Gateway / Compose Roles
 
 The gateway needs access to Docker networks, so it is normally run as a Docker
-container. The root `docker-compose.yml` starts the gateway only; it is not a
-full-stack compose file.
+container. The Java control plane and worker can still be run natively with
+Maven or packaged jars; the compose files below handle PostgreSQL and the local
+gateway for each machine role.
 
 The gateway Dockerfile expects a built jar under `target`, so package it first:
 
@@ -433,19 +476,30 @@ The gateway Dockerfile expects a built jar under `target`, so package it first:
 cd bicloud-gateway
 .\mvnw.cmd package -DskipTests
 cd ..
-docker compose up --build -d
 ```
 
-On Windows Docker Desktop, the root compose file assumes Docker daemon access
-through `tcp://host.docker.internal:2375`. If that TCP endpoint is not enabled,
-the gateway will not be able to manage Docker networks. Use a suitable Docker
-daemon configuration or the Ubuntu socket-proxy setup.
+Use the compose file that matches the machine:
 
-Ubuntu/Linux gateway setup:
+```powershell
+# Main/control-plane Windows PC: PostgreSQL + gateway
+docker compose -f docker-compose.main-windows.yml up --build -d
+
+# Worker Windows PC: gateway only
+docker compose -f docker-compose.worker-windows.yml up --build -d
+```
 
 ```bash
-docker compose -f docker-compose.ubuntu.yml up --build -d
+# Main/control-plane Ubuntu PC: PostgreSQL + socket-proxy + gateway
+docker compose -f docker-compose.main-ubuntu.yml up --build -d
+
+# Worker Ubuntu PC: socket-proxy + gateway only
+docker compose -f docker-compose.worker-ubuntu.yml up --build -d
 ```
+
+On Windows Docker Desktop, the gateway compose files assume Docker daemon
+access through `tcp://host.docker.internal:2375`. If that TCP endpoint is not
+enabled, the gateway will not be able to manage Docker networks. Ubuntu files
+use the included `bicloud-socket-proxy` service instead.
 
 Gateway health check:
 
@@ -768,7 +822,8 @@ Existing tests cover areas such as:
   aggregation, stricter network policy, and operational hardening.
 - Self-healing is intentionally eventually consistent. Docker and network drift
   are corrected by periodic loops rather than instant transactions.
-- The root `docker-compose.yml` is not a full-stack deployment. It runs the
+- The compose files are not full-stack deployments for every Java service.
+  Main compose files run PostgreSQL + gateway; worker compose files run the
   gateway only.
 - The gateway must have correct Docker daemon access to join tenant networks.
 

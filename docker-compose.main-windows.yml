@@ -1,0 +1,52 @@
+# BiCloud - Main PC on Windows
+# Runs the shared PostgreSQL database and this machine's gateway.
+# The control-plane app itself may run natively on this PC.
+#
+# docker compose -f docker-compose.main-windows.yml up --build -d
+
+services:
+
+  bicloud-postgres:
+    image: postgres:16
+    container_name: bicloud-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bicloud}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - bicloud-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-bicloud}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  bicloud-gateway:
+    build:
+      context: ./bicloud-gateway
+      dockerfile: Dockerfile
+    image: bicloud-gateway:latest
+    pull_policy: build
+    container_name: bicloud-gateway
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    environment:
+      BICLOUD_CONTROL_PLANE_URL: ${BICLOUD_CONTROL_PLANE_URL}
+      BICLOUD_CONTROL_PLANE_API_KEY: ${BICLOUD_CONTROL_PLANE_API_KEY}
+      BICLOUD_GATEWAY_API_KEY: ${BICLOUD_GATEWAY_API_KEY}
+      BICLOUD_GATEWAY_CONTAINER_NAME: bicloud-gateway
+      BICLOUD_GATEWAY_DOCKER_HOST: ${BICLOUD_GATEWAY_DOCKER_HOST:-tcp://host.docker.internal:2375}
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:9000/gateway/health >/dev/null || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  bicloud-postgres-data:

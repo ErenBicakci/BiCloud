@@ -1,3 +1,9 @@
+# BiCloud - Worker PC on Windows
+# Runs only this machine's gateway. The worker app runs natively on Windows.
+# No PostgreSQL is started here; the database belongs to the main/control-plane PC.
+#
+# docker compose -f docker-compose.worker-windows.yml up --build -d
+
 services:
 
   bicloud-gateway:
@@ -11,9 +17,9 @@ services:
     ports:
       - "9000:9000"
     environment:
-      # CP address and key come from .env (see .env.example)
-      BICLOUD_CONTROL_PLANE_URL: ${BICLOUD_CONTROL_PLANE_URL:?see .env.example}
-      BICLOUD_GATEWAY_API_KEY: ${BICLOUD_GATEWAY_API_KEY:?see .env.example}
+      BICLOUD_CONTROL_PLANE_URL: ${BICLOUD_CONTROL_PLANE_URL}
+      BICLOUD_CONTROL_PLANE_API_KEY: ${BICLOUD_CONTROL_PLANE_API_KEY}
+      BICLOUD_GATEWAY_API_KEY: ${BICLOUD_GATEWAY_API_KEY}
       BICLOUD_GATEWAY_CONTAINER_NAME: bicloud-gateway
       BICLOUD_GATEWAY_DOCKER_HOST: ${BICLOUD_GATEWAY_DOCKER_HOST:-tcp://host.docker.internal:2375}
     healthcheck:
