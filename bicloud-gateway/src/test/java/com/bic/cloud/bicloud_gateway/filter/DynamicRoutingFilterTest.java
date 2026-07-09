@@ -95,8 +95,8 @@ class DynamicRoutingFilterTest {
                 .isEqualTo("gateway-secret");
         assertThat(chain.exchange().getRequest().getHeaders().containsKey(MeshRoutingFilter.CALLER_PROJECT_HEADER))
                 .isFalse();
-        assertThat(chain.exchange().getAttribute(ServerWebExchangeUtils.PRESERVE_HOST_HEADER_ATTRIBUTE))
-                .isEqualTo(Boolean.TRUE);
+        Boolean preserveHost = chain.exchange().getAttribute(ServerWebExchangeUtils.PRESERVE_HOST_HEADER_ATTRIBUTE);
+        assertThat(preserveHost).isTrue();
     }
 
     @Test
