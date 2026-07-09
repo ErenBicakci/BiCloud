@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.ResourceAccessException;
 
 import java.time.Instant;
 
@@ -19,6 +20,8 @@ public class WorkerHeartbeatScheduler {
     private final ControlPlaneHttpClient client;
     private final WorkerMetricsService metricsService;
     private final WorkerStartup workerStartup;
+
+    private int consecutiveFailures = 0;
 
     @Scheduled(fixedDelay = 5000)
     public void sendHeartbeat() {
@@ -36,9 +39,29 @@ public class WorkerHeartbeatScheduler {
                     .build();
 
             client.sendHeartbeat(request);
+            if (consecutiveFailures > 0) {
+                log.info("Heartbeat recovered for workerId={} after {} failed attempt(s).",
+                        workerStartup.getWorkerId(), consecutiveFailures);
+                consecutiveFailures = 0;
+            }
 
+        } catch (ResourceAccessException e) {
+            recordHeartbeatFailure("Control plane heartbeat timed out or is unreachable", e);
         } catch (Exception e) {
-            log.error("Heartbeat failed for workerId: {}", workerStartup.getWorkerId(), e);
+            recordHeartbeatFailure("Heartbeat failed", e);
+        }
+    }
+
+    private void recordHeartbeatFailure(String reason, Exception e) {
+        consecutiveFailures++;
+
+        if (consecutiveFailures == 1 || consecutiveFailures % 12 == 0) {
+            log.warn("{} for workerId={} (consecutiveFailures={}, error={})",
+                    reason, workerStartup.getWorkerId(), consecutiveFailures, e.getMessage());
+            log.debug("Heartbeat failure details for workerId={}", workerStartup.getWorkerId(), e);
+        } else {
+            log.debug("{} for workerId={} (consecutiveFailures={}, error={})",
+                    reason, workerStartup.getWorkerId(), consecutiveFailures, e.getMessage());
         }
     }
 }

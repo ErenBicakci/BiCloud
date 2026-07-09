@@ -10,6 +10,8 @@ server.port=8081
 spring.task.scheduling.pool.size=4
 worker.container-snapshot-interval-ms=15000
 worker.container-snapshot-initial-delay-ms=15000
+worker.http.connect-timeout-ms=3000
+worker.http.read-timeout-ms=10000
 
 # Windows Docker Desktop:
 docker.host=npipe:////./pipe/docker_engine
