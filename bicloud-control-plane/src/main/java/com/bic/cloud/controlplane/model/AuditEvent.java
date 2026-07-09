@@ -90,6 +90,7 @@ public class AuditEvent {
         SERVICE_UPDATED,
         SERVICE_DELETED,
         SERVICE_SCALED,
+        AUTOSCALING_SCALED,
         // Container (user)
         CONTAINER_STOPPED,
         CONTAINER_REMOVED,

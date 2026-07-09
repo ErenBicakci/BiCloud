@@ -28,6 +28,13 @@ public class ProjectDetailResponse {
         private String serviceName;
         private String imageName;
         private int desiredReplicas;
+        private boolean autoscalingEnabled;
+        private int minReplicas;
+        private int maxReplicas;
+        private int targetCpuPercent;
+        private int scaleDownCpuPercent;
+        private int scaleUpCooldownSeconds;
+        private int scaleDownCooldownSeconds;
         private long runningReplicas;
         private int containerPort;
         private Integer memoryLimitMb;

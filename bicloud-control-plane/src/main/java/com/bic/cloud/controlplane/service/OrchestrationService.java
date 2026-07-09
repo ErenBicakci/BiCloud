@@ -195,6 +195,7 @@ public class OrchestrationService {
             managed.setCpuLimit(dto.getCpuLimit());
             managed.setAllowInternet(dto.isAllowInternet());
             managed.setExposeExternally(dto.isExposeExternally());
+            applyAutoscalingPolicy(managed, dto);
 
             // @ElementCollection: mutate the managed map in place, don't replace the reference
             if (managed.getEnvironmentVariables() == null) {
@@ -264,6 +265,47 @@ public class OrchestrationService {
 
     private Map<String, String> normalizeEnv(Map<String, String> env) {
         return env == null ? Map.of() : env;
+    }
+
+    private void applyAutoscalingPolicy(ProjectImage image, UpdateProjectImageDto dto) {
+        boolean autoscalingEnabled = dto.getAutoscalingEnabled() != null
+                ? dto.getAutoscalingEnabled()
+                : image.isAutoscalingEnabled();
+
+        int minReplicas = dto.getMinReplicas() != null ? dto.getMinReplicas() : image.getMinReplicas();
+        int maxReplicas = dto.getMaxReplicas() != null ? dto.getMaxReplicas() : image.getMaxReplicas();
+        int targetCpuPercent = dto.getTargetCpuPercent() != null
+                ? dto.getTargetCpuPercent()
+                : image.getTargetCpuPercent();
+        int scaleDownCpuPercent = dto.getScaleDownCpuPercent() != null
+                ? dto.getScaleDownCpuPercent()
+                : image.getScaleDownCpuPercent();
+        int scaleUpCooldownSeconds = dto.getScaleUpCooldownSeconds() != null
+                ? dto.getScaleUpCooldownSeconds()
+                : image.getScaleUpCooldownSeconds();
+        int scaleDownCooldownSeconds = dto.getScaleDownCooldownSeconds() != null
+                ? dto.getScaleDownCooldownSeconds()
+                : image.getScaleDownCooldownSeconds();
+
+        ProjectImageService.assertAutoscalingPolicy(
+                autoscalingEnabled,
+                minReplicas,
+                maxReplicas,
+                targetCpuPercent,
+                scaleDownCpuPercent);
+
+        image.setAutoscalingEnabled(autoscalingEnabled);
+        image.setMinReplicas(minReplicas);
+        image.setMaxReplicas(maxReplicas);
+        image.setTargetCpuPercent(targetCpuPercent);
+        image.setScaleDownCpuPercent(scaleDownCpuPercent);
+        image.setScaleUpCooldownSeconds(scaleUpCooldownSeconds);
+        image.setScaleDownCooldownSeconds(scaleDownCooldownSeconds);
+
+        if (autoscalingEnabled) {
+            int boundedDesired = Math.max(minReplicas, Math.min(maxReplicas, image.getDesiredReplicas()));
+            image.setDesiredReplicas(boundedDesired);
+        }
     }
 
     public void scale(Long imageId, int newReplicas, BicloudUserDetails caller) {

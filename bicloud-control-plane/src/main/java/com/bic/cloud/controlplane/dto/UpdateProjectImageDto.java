@@ -45,6 +45,32 @@ public class UpdateProjectImageDto {
     @DecimalMax(value = "4.0", message = "cpuLimit may be at most 4.0 cores.")
     private Double cpuLimit;
 
+    private Boolean autoscalingEnabled;
+
+    @Min(value = 1, message = "minReplicas must be at least 1.")
+    @Max(value = 10, message = "minReplicas may be at most 10.")
+    private Integer minReplicas;
+
+    @Min(value = 1, message = "maxReplicas must be at least 1.")
+    @Max(value = 10, message = "maxReplicas may be at most 10.")
+    private Integer maxReplicas;
+
+    @Min(value = 1, message = "targetCpuPercent must be at least 1.")
+    @Max(value = 100, message = "targetCpuPercent may be at most 100.")
+    private Integer targetCpuPercent;
+
+    @Min(value = 1, message = "scaleDownCpuPercent must be at least 1.")
+    @Max(value = 99, message = "scaleDownCpuPercent may be at most 99.")
+    private Integer scaleDownCpuPercent;
+
+    @Min(value = 15, message = "scaleUpCooldownSeconds must be at least 15.")
+    @Max(value = 3600, message = "scaleUpCooldownSeconds may be at most 3600.")
+    private Integer scaleUpCooldownSeconds;
+
+    @Min(value = 15, message = "scaleDownCooldownSeconds must be at least 15.")
+    @Max(value = 3600, message = "scaleDownCooldownSeconds may be at most 3600.")
+    private Integer scaleDownCooldownSeconds;
+
     /** Egress opt-in; only admins may change it (checked in the service layer). */
     private boolean allowInternet;
 

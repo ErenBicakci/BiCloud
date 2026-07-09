@@ -3,6 +3,7 @@ package com.bic.cloud.controlplane.service;
 import com.bic.cloud.controlplane.dto.CreateProjectImageDto;
 import com.bic.cloud.controlplane.dto.ProjectImageResponse;
 import com.bic.cloud.controlplane.exception.ForbiddenException;
+import com.bic.cloud.controlplane.exception.InvalidAutoscalingPolicyException;
 import com.bic.cloud.controlplane.exception.NameConflictException;
 import com.bic.cloud.controlplane.exception.ProjectImageNotFoundException;
 import com.bic.cloud.controlplane.exception.ProjectNotFoundException;
@@ -48,6 +49,12 @@ public class ProjectImageService {
 
         projectService.assertOwnerOrAdmin(project, caller);
         assertCanSetAllowInternet(dto.isAllowInternet(), caller);
+        assertAutoscalingPolicy(
+                dto.isAutoscalingEnabled(),
+                dto.getMinReplicas(),
+                dto.getMaxReplicas(),
+                dto.getTargetCpuPercent(),
+                dto.getScaleDownCpuPercent());
 
         // route key is projectName:serviceName -> unique within the project.
         // The DB constraint is the backstop; this check produces the friendly 409.
@@ -64,6 +71,13 @@ public class ProjectImageService {
                 .cpuLimit(dto.getCpuLimit())
                 .environmentVariables(dto.getEnvironmentVariables())
                 .desiredReplicas(dto.getDesiredReplicas())
+                .autoscalingEnabled(dto.isAutoscalingEnabled())
+                .minReplicas(dto.getMinReplicas())
+                .maxReplicas(dto.getMaxReplicas())
+                .targetCpuPercent(dto.getTargetCpuPercent())
+                .scaleDownCpuPercent(dto.getScaleDownCpuPercent())
+                .scaleUpCooldownSeconds(dto.getScaleUpCooldownSeconds())
+                .scaleDownCooldownSeconds(dto.getScaleDownCooldownSeconds())
                 .allowInternet(dto.isAllowInternet())
                 .exposeExternally(dto.isExposeExternally())
                 .build();
@@ -85,6 +99,13 @@ public class ProjectImageService {
                 .imageName(saved.getImageName())
                 .containerPort(saved.getContainerPort())
                 .desiredReplicas(saved.getDesiredReplicas())
+                .autoscalingEnabled(saved.isAutoscalingEnabled())
+                .minReplicas(saved.getMinReplicas())
+                .maxReplicas(saved.getMaxReplicas())
+                .targetCpuPercent(saved.getTargetCpuPercent())
+                .scaleDownCpuPercent(saved.getScaleDownCpuPercent())
+                .scaleUpCooldownSeconds(saved.getScaleUpCooldownSeconds())
+                .scaleDownCooldownSeconds(saved.getScaleDownCooldownSeconds())
                 .memoryLimitMb(saved.getMemoryLimitMb())
                 .cpuLimit(saved.getCpuLimit())
                 .allowInternet(saved.isAllowInternet())
@@ -105,6 +126,25 @@ public class ProjectImageService {
                 .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
         if (!isAdmin) {
             throw new ForbiddenException("Only admins can enable internet access for a service.");
+        }
+    }
+
+    public static void assertAutoscalingPolicy(boolean enabled,
+                                               int minReplicas,
+                                               int maxReplicas,
+                                               int targetCpuPercent,
+                                               int scaleDownCpuPercent) {
+        if (minReplicas > maxReplicas) {
+            throw new InvalidAutoscalingPolicyException(
+                    "minReplicas must be less than or equal to maxReplicas.");
+        }
+        if (scaleDownCpuPercent >= targetCpuPercent) {
+            throw new InvalidAutoscalingPolicyException(
+                    "scaleDownCpuPercent must be lower than targetCpuPercent.");
+        }
+        if (enabled && maxReplicas < 1) {
+            throw new InvalidAutoscalingPolicyException(
+                    "maxReplicas must be at least 1 when autoscaling is enabled.");
         }
     }
 

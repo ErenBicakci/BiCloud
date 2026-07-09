@@ -33,6 +33,32 @@ public class CreateProjectImageDto {
     @Max(value = 10, message = "desiredReplicas may be at most 10.")
     private int desiredReplicas;
 
+    private boolean autoscalingEnabled = false;
+
+    @Min(value = 1, message = "minReplicas must be at least 1.")
+    @Max(value = 10, message = "minReplicas may be at most 10.")
+    private int minReplicas = 1;
+
+    @Min(value = 1, message = "maxReplicas must be at least 1.")
+    @Max(value = 10, message = "maxReplicas may be at most 10.")
+    private int maxReplicas = 3;
+
+    @Min(value = 1, message = "targetCpuPercent must be at least 1.")
+    @Max(value = 100, message = "targetCpuPercent may be at most 100.")
+    private int targetCpuPercent = 70;
+
+    @Min(value = 1, message = "scaleDownCpuPercent must be at least 1.")
+    @Max(value = 99, message = "scaleDownCpuPercent may be at most 99.")
+    private int scaleDownCpuPercent = 30;
+
+    @Min(value = 15, message = "scaleUpCooldownSeconds must be at least 15.")
+    @Max(value = 3600, message = "scaleUpCooldownSeconds may be at most 3600.")
+    private int scaleUpCooldownSeconds = 60;
+
+    @Min(value = 15, message = "scaleDownCooldownSeconds must be at least 15.")
+    @Max(value = 3600, message = "scaleDownCooldownSeconds may be at most 3600.")
+    private int scaleDownCooldownSeconds = 300;
+
     @Min(value = 1,     message = "containerPort must be at least 1.")
     @Max(value = 65535, message = "containerPort may be at most 65535.")
     private int containerPort;
@@ -67,4 +93,20 @@ public class CreateProjectImageDto {
 
     /** Ingress opt-in: whether this service accepts external host-based gateway traffic. */
     private boolean exposeExternally;
+
+    @AssertTrue(message = "minReplicas must be less than or equal to maxReplicas.")
+    public boolean isAutoscalingReplicaRangeValid() {
+        return minReplicas <= maxReplicas;
+    }
+
+    @AssertTrue(message = "scaleDownCpuPercent must be lower than targetCpuPercent.")
+    public boolean isAutoscalingCpuThresholdValid() {
+        return scaleDownCpuPercent < targetCpuPercent;
+    }
+
+    @AssertTrue(message = "desiredReplicas must be between minReplicas and maxReplicas when autoscaling is enabled.")
+    public boolean isAutoscalingDesiredReplicaValid() {
+        return !autoscalingEnabled
+                || (desiredReplicas >= minReplicas && desiredReplicas <= maxReplicas);
+    }
 }
