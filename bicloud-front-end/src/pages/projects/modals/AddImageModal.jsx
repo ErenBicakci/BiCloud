@@ -6,7 +6,10 @@ import { extractError } from '../../../utils/common';
 import { Modal } from '../../../components/ui/Modal';
 import { Button, Input, Badge } from '../../../components/ui';
 import { EnvVarsEditor } from './EnvVarsEditor';
+import { AutoscalingPolicyFields } from './AutoscalingPolicyFields';
+import { autoscalingFormFromService, parseAutoscalingPolicy } from './autoscalingPolicy';
 import {
+  Activity,
   Box,
   Cpu,
   Globe,
@@ -44,11 +47,18 @@ export const AddImageModal = ({ projectId, projectName, isOpen, onClose, onSucce
   const [envVars, setEnvVars] = useState([]);
   const [allowInternet, setAllowInternet] = useState(false);
   const [exposeExternally, setExposeExternally] = useState(false);
+  const [autoscaling, setAutoscaling] = useState(() => autoscalingFormFromService());
 
   const handleChange = (e) => {
     const { name, value } = e.target;
     const normalized = name === 'serviceName' ? value.toLowerCase() : value;
     setForm(prev => ({ ...prev, [name]: normalized }));
+    setError('');
+  };
+
+  const handleAutoscalingChange = (e) => {
+    const { name, value } = e.target;
+    setAutoscaling(prev => ({ ...prev, [name]: value }));
     setError('');
   };
 
@@ -65,6 +75,9 @@ export const AddImageModal = ({ projectId, projectName, isOpen, onClose, onSucce
 
     const desiredReplicas = parseIntegerInRange(form.desiredReplicas, SERVICE_LIMITS.replicas);
     if (desiredReplicas.error) return setError(desiredReplicas.error);
+
+    const autoscalingPolicy = parseAutoscalingPolicy(autoscaling, desiredReplicas.value);
+    if (autoscalingPolicy.error) return setError(autoscalingPolicy.error);
 
     const containerPort = parseIntegerInRange(form.containerPort, SERVICE_LIMITS.port);
     if (containerPort.error) return setError(containerPort.error);
@@ -94,6 +107,7 @@ export const AddImageModal = ({ projectId, projectName, isOpen, onClose, onSucce
         serviceName: svc,
         imageName: form.imageName.trim(),
         desiredReplicas: desiredReplicas.value,
+        ...autoscalingPolicy.value,
         containerPort: containerPort.value,
         memoryLimitMb: memoryLimitMb.value,
         cpuLimit: cpuLimit.value,
@@ -189,6 +203,14 @@ export const AddImageModal = ({ projectId, projectName, isOpen, onClose, onSucce
               </div>
             </FormSection>
 
+            <FormSection icon={Activity} title="Autoscaling" subtitle="CPU policy updates the desired replica count.">
+              <AutoscalingPolicyFields
+                form={autoscaling}
+                onToggle={(enabled) => setAutoscaling(prev => ({ ...prev, autoscalingEnabled: enabled }))}
+                onChange={handleAutoscalingChange}
+              />
+            </FormSection>
+
             <FormSection icon={ShieldCheck} title="Network policy" subtitle="Ingress and egress are separate controls.">
               <div className="policy-options">
                 <PolicyOption
@@ -230,6 +252,9 @@ export const AddImageModal = ({ projectId, projectName, isOpen, onClose, onSucce
             envCount={envVars.filter(e => e.key.trim()).length}
             externalHost={externalHost}
             egress={isAdmin ? (allowInternet ? 'Allowed' : 'Isolated') : 'Isolated'}
+            autoscaling={autoscaling.autoscalingEnabled
+              ? `${autoscaling.minReplicas}-${autoscaling.maxReplicas} @ ${autoscaling.targetCpuPercent}%`
+              : 'Manual'}
           />
         </div>
 
@@ -271,7 +296,7 @@ const PolicyOption = ({ active, checked, onChange, icon: Icon, title, descriptio
   </label>
 );
 
-const ReviewPanel = ({ serviceName, imageName, replicas, port, memory, cpu, envCount, externalHost, egress }) => (
+const ReviewPanel = ({ serviceName, imageName, replicas, port, memory, cpu, envCount, externalHost, egress, autoscaling }) => (
   <aside className="form-review">
     <div className="form-review-header">
       <div className="form-review-title">
@@ -287,6 +312,7 @@ const ReviewPanel = ({ serviceName, imageName, replicas, port, memory, cpu, envC
       <ReviewRow label="Memory" value={`${memory || '-'} MB`} />
       <ReviewRow label="CPU" value={`${cpu || '-'} core`} />
       <ReviewRow label="Env vars" value={envCount} />
+      <ReviewRow label="Autoscale" value={autoscaling} />
       <ReviewRow label="External" value={externalHost} />
       <ReviewRow label="Egress" value={egress} />
     </div>

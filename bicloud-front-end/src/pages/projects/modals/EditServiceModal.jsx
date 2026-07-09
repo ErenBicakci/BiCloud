@@ -6,7 +6,10 @@ import { extractError } from '../../../utils/common';
 import { Modal } from '../../../components/ui/Modal';
 import { Button, Input, Badge } from '../../../components/ui';
 import { EnvVarsEditor } from './EnvVarsEditor';
+import { AutoscalingPolicyFields } from './AutoscalingPolicyFields';
+import { autoscalingFormFromService, parseAutoscalingPolicy } from './autoscalingPolicy';
 import {
+  Activity,
   AlertTriangle,
   Box,
   Cpu,
@@ -45,6 +48,7 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
   });
   const [allowInternet, setAllowInternet] = useState(service.allowInternet ?? false);
   const [exposeExternally, setExposeExternally] = useState(service.exposeExternally ?? false);
+  const [autoscaling, setAutoscaling] = useState(() => autoscalingFormFromService(service));
   const [envVars, setEnvVars] = useState(
     () => Object.entries(service.environmentVariables || {}).map(([key, value]) => ({ key, value }))
   );
@@ -52,6 +56,12 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
   const handleChange = (e) => {
     const { name, value } = e.target;
     setForm(prev => ({ ...prev, [name]: value }));
+    setError('');
+  };
+
+  const handleAutoscalingChange = (e) => {
+    const { name, value } = e.target;
+    setAutoscaling(prev => ({ ...prev, [name]: value }));
     setError('');
   };
 
@@ -68,6 +78,9 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
 
     const cpuLimit = parseDecimalInRange(form.cpuLimit, SERVICE_LIMITS.cpu);
     if (cpuLimit.error) return setError(cpuLimit.error);
+
+    const autoscalingPolicy = parseAutoscalingPolicy(autoscaling);
+    if (autoscalingPolicy.error) return setError(autoscalingPolicy.error);
 
     const entries = envEditorRef.current?.commit();
     if (entries === null) return;
@@ -87,6 +100,7 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
         containerPort: containerPort.value,
         memoryLimitMb: memoryLimitMb.value,
         cpuLimit: cpuLimit.value,
+        ...autoscalingPolicy.value,
         environmentVariables: envMap,
         allowInternet: isAdmin ? allowInternet : (service.allowInternet ?? false),
         exposeExternally,
@@ -161,6 +175,14 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
               </div>
             </FormSection>
 
+            <FormSection icon={Activity} title="Autoscaling" subtitle="Policy changes do not recreate running containers.">
+              <AutoscalingPolicyFields
+                form={autoscaling}
+                onToggle={(enabled) => setAutoscaling(prev => ({ ...prev, autoscalingEnabled: enabled }))}
+                onChange={handleAutoscalingChange}
+              />
+            </FormSection>
+
             <FormSection icon={ShieldCheck} title="Network policy" subtitle="Ingress can change without modifying the service name.">
               <div className="policy-options">
                 <PolicyOption
@@ -200,6 +222,9 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
             memory={form.memoryLimitMb}
             cpu={form.cpuLimit}
             envCount={envVars.filter(e => e.key.trim()).length}
+            autoscaling={autoscaling.autoscalingEnabled
+              ? `${autoscaling.minReplicas}-${autoscaling.maxReplicas} @ ${autoscaling.targetCpuPercent}%`
+              : 'Manual'}
             external={exposeExternally ? 'Gateway exposed' : 'Mesh only'}
             egress={isAdmin ? (allowInternet ? 'Allowed' : 'Isolated') : (service.allowInternet ? 'Allowed' : 'Isolated')}
             impact={hasRuntimeImpact ? 'Recreate containers' : 'No running replicas'}
@@ -244,7 +269,7 @@ const PolicyOption = ({ active, checked, onChange, icon: Icon, title, descriptio
   </label>
 );
 
-const ReviewPanel = ({ serviceName, imageName, replicas, port, memory, cpu, envCount, external, egress, impact }) => (
+const ReviewPanel = ({ serviceName, imageName, replicas, port, memory, cpu, envCount, autoscaling, external, egress, impact }) => (
   <aside className="form-review">
     <div className="form-review-header">
       <div className="form-review-title">
@@ -260,6 +285,7 @@ const ReviewPanel = ({ serviceName, imageName, replicas, port, memory, cpu, envC
       <ReviewRow label="Memory" value={`${memory || '-'} MB`} />
       <ReviewRow label="CPU" value={`${cpu || '-'} core`} />
       <ReviewRow label="Env vars" value={envCount} />
+      <ReviewRow label="Autoscale" value={autoscaling} />
       <ReviewRow label="External" value={external} />
       <ReviewRow label="Egress" value={egress} />
       <ReviewRow label="Impact" value={impact} />

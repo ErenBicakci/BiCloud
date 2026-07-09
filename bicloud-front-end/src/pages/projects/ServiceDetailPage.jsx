@@ -233,6 +233,15 @@ export default function ServiceDetailPage() {
           tone={isHealthy ? 'green' : (isPartial ? 'yellow' : 'red')}
         />
         <StatCard
+          icon={Activity}
+          label="Autoscaling"
+          value={service.autoscalingEnabled ? 'On' : 'Manual'}
+          hint={service.autoscalingEnabled
+            ? `${service.minReplicas}-${service.maxReplicas} replicas, target ${service.targetCpuPercent}% CPU`
+            : 'Fixed desired replica count'}
+          tone={service.autoscalingEnabled ? 'green' : undefined}
+        />
+        <StatCard
           icon={Cpu}
           label="CPU usage"
           value={hasMetrics ? `${totalCpu.toFixed(1)}%` : '-'}
@@ -303,6 +312,31 @@ export default function ServiceDetailPage() {
               value={service.exposeExternally ? 'Exposed through gateway' : 'Internal mesh only'}
               valueColor={service.exposeExternally ? 'var(--accent-yellow)' : 'var(--accent-green)'}
             />
+            <KvRow
+              icon={Activity}
+              label="Autoscaling"
+              value={service.autoscalingEnabled ? 'Enabled' : 'Manual'}
+              valueColor={service.autoscalingEnabled ? 'var(--accent-green)' : 'var(--text-muted)'}
+            />
+            {service.autoscalingEnabled && (
+              <>
+                <KvRow
+                  icon={Layers}
+                  label="Replica range"
+                  value={`${service.minReplicas}-${service.maxReplicas}`}
+                />
+                <KvRow
+                  icon={Cpu}
+                  label="CPU thresholds"
+                  value={`up > ${service.targetCpuPercent}%, down < ${service.scaleDownCpuPercent}%`}
+                />
+                <KvRow
+                  icon={RefreshCw}
+                  label="Cooldowns"
+                  value={`${service.scaleUpCooldownSeconds}s up / ${service.scaleDownCooldownSeconds}s down`}
+                />
+              </>
+            )}
             <KvRow
               icon={Activity}
               label="Health"
@@ -591,7 +625,10 @@ const EnvVarsSection = ({ envVars }) => {
 
 const ScaleModal = ({ image, onClose, onSuccess }) => {
   const { error, success } = useToast();
-  const [replicas, setReplicas] = useState(image.desiredReplicas);
+  const minReplicas = image.autoscalingEnabled ? (image.minReplicas ?? 1) : 0;
+  const maxReplicas = image.autoscalingEnabled ? (image.maxReplicas ?? 10) : 10;
+  const initialReplicas = Math.min(Math.max(image.desiredReplicas, minReplicas), maxReplicas);
+  const [replicas, setReplicas] = useState(initialReplicas);
   const [loading, setLoading] = useState(false);
 
   const handleScale = async () => {
@@ -611,13 +648,17 @@ const ScaleModal = ({ image, onClose, onSuccess }) => {
   return (
     <Modal isOpen onClose={onClose} title={`Scale Service: ${image.serviceName}`}>
       <p style={{ fontSize: '.85rem', color: 'var(--text-muted)', marginBottom: 18 }}>
-        Current: <strong>{image.runningReplicas}/{image.desiredReplicas}</strong> replicas. Set the new target count.
+        Current: <strong>{image.runningReplicas}/{image.desiredReplicas}</strong> replicas.
+        {' '}
+        {image.autoscalingEnabled
+          ? `Autoscaling keeps manual targets between ${minReplicas} and ${maxReplicas}.`
+          : 'Set the new target count.'}
       </p>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
         <input
           type="range"
-          min="0"
-          max="10"
+          min={minReplicas}
+          max={maxReplicas}
           value={replicas}
           onChange={(e) => setReplicas(parseInt(e.target.value, 10))}
           style={{ flex: 1 }}

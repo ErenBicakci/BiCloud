@@ -14,6 +14,7 @@ import { auditService } from '../../services/audit.service';
 import { AddImageModal } from './modals/AddImageModal';
 import { EditServiceModal } from './modals/EditServiceModal';
 import {
+  Activity,
   ChevronLeft,
   Play,
   Square,
@@ -315,6 +316,13 @@ const ServicesTab = ({ projectId, images, onScale, onEdit, onDelete }) => {
                     <Network size={11} /> {img.exposeExternally ? 'External' : 'Mesh only'}
                   </span>
                 </Badge>
+                {img.autoscalingEnabled && (
+                  <Badge variant="purple">
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <Activity size={11} /> Auto
+                    </span>
+                  </Badge>
+                )}
                 {inCooldown && (
                   <Badge variant="red">
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -358,7 +366,10 @@ const Stat = ({ label, value }) => (
 
 const ScaleModal = ({ image, onClose, onSuccess }) => {
   const { error, success } = useToast();
-  const [replicas, setReplicas] = useState(image.desiredReplicas);
+  const minReplicas = image.autoscalingEnabled ? (image.minReplicas ?? 1) : 0;
+  const maxReplicas = image.autoscalingEnabled ? (image.maxReplicas ?? 10) : 10;
+  const initialReplicas = Math.min(Math.max(image.desiredReplicas, minReplicas), maxReplicas);
+  const [replicas, setReplicas] = useState(initialReplicas);
   const [loading, setLoading] = useState(false);
 
   const handleScale = async () => {
@@ -375,11 +386,13 @@ const ScaleModal = ({ image, onClose, onSuccess }) => {
     <Modal isOpen={!!image} onClose={onClose} title={`Scale Service: ${image.serviceName}`}>
       <div style={{ marginBottom: 24 }}>
         <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: 16 }}>
-          Set the number of replicas to run for this service.
+          {image.autoscalingEnabled
+            ? `Autoscaling is enabled. Set the current target between ${minReplicas} and ${maxReplicas} replicas.`
+            : 'Set the number of replicas to run for this service.'}
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <input 
-            type="range" min="0" max="10" value={replicas} 
+            type="range" min={minReplicas} max={maxReplicas} value={replicas}
             onChange={(e) => setReplicas(parseInt(e.target.value))}
             style={{ flex: 1 }}
           />

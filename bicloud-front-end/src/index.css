@@ -2021,6 +2021,11 @@ tbody tr:hover { background: rgba(255,255,255,.026); }
   gap: 10px;
 }
 
+.autoscale-fields {
+  display: grid;
+  gap: 14px;
+}
+
 .policy-option {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) auto;
