@@ -322,8 +322,12 @@ body {
   padding: 0;
   width: 100%;
   max-width: 480px;
+  max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .modal-header {
   display: flex;
@@ -332,15 +336,23 @@ body {
   min-height: 58px;
   padding: 16px 20px;
   border-bottom: 1px solid var(--border-subtle);
+  flex: 0 0 auto;
 }
 .modal-title { font-size: 1.1rem; font-weight: 600; }
-.modal-content { padding: 20px; }
+.modal-content {
+  padding: 20px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  flex: 1 1 auto;
+}
 .modal-footer {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
   padding: 16px 20px;
   border-top: 1px solid var(--border-subtle);
+  flex: 0 0 auto;
 }
 
 /* Table */
