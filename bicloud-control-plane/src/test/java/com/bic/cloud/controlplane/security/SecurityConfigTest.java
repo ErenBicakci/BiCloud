@@ -37,7 +37,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         WorkerViewController.class,
         SecurityConfigTest.TestActuatorController.class
 })
-@Import({SecurityConfig.class, JwtAuthFilter.class})
+@Import({
+        SecurityConfig.class,
+        JwtAuthFilter.class,
+        SecurityConfigTest.TestActuatorController.class
+})
 class SecurityConfigTest {
 
     @Autowired
