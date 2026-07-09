@@ -296,9 +296,39 @@ class WorkerScoringServiceTest {
     }
 
     @Test
+    @DisplayName("selectBestWorker -> anti-affinity penalty diminishes after repeated replicas")
+    void selectBestWorker_antiAffinityPenaltyDiminishes() {
+        WorkerNode halfLoadedNode = WorkerNode.builder()
+                .id(UUID.randomUUID())
+                .workerName("half-loaded-empty-worker")
+                .totalCpuCores(8)
+                .totalMemoryMb(8192)
+                .serverPort(8082)
+                .build();
+
+        WorkerState halfLoadedState = WorkerState.builder()
+                .worker(halfLoadedNode)
+                .status(WorkerState.NodeStatus.ACTIVE)
+                .cpuUsagePercent(50)
+                .usedMemoryMb(4096)
+                .build();
+
+        // test-worker: idle score 100, hosts 3 replicas -> penalty 43.75, placement score 56.25
+        // half-loaded-empty-worker: no replicas, resource score 50
+        when(stateRepository.findAll()).thenReturn(List.of(activeState, halfLoadedState));
+        when(containerInstanceRepository.countAliveReplicasPerWorker(42L))
+                .thenReturn(List.<Object[]>of(new Object[]{node.getId(), 3L}));
+
+        Optional<WorkerNode> result = scoringService.selectBestWorker(42L);
+
+        assertThat(result).isPresent();
+        assertThat(result.get().getWorkerName()).isEqualTo("test-worker");
+    }
+
+    @Test
     @DisplayName("selectBestWorker -> a lone worker is still chosen even when it hosts every replica")
     void selectBestWorker_lonWorkerStillChosenDespitePenalty() {
-        // 5 replicas -> score 100 - 125 = negative, but it is the only candidate
+        // 5 replicas -> score 100 - 48.4375, but it is the only candidate
         when(stateRepository.findAll()).thenReturn(List.of(activeState));
         when(containerInstanceRepository.countAliveReplicasPerWorker(42L))
                 .thenReturn(List.<Object[]>of(new Object[]{node.getId(), 5L}));

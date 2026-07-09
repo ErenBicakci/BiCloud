@@ -32,12 +32,10 @@ import java.util.UUID;
  *
  * The score uses the pessimistic (max usage) of the two signals.
  *
- * On top of that, SOFT ANTI-AFFINITY: every live replica of the service being
- * placed that a worker already hosts subtracts a fixed penalty from that
- * worker's score. Replicas spread across workers when possible, but a single
- * remaining worker still gets the deploy (it merely scores lower, and max()
- * of one candidate always wins) - the simplified version of Kubernetes'
- * preferred pod anti-affinity.
+ * On top of that, SOFT ANTI-AFFINITY: live replicas of the service being placed
+ * subtract a diminishing penalty from that worker's score. The first same-service
+ * replica strongly nudges the next one elsewhere; later replicas matter less, so
+ * resource availability can dominate after the service has been spread.
  */
 @Slf4j
 @Service
@@ -51,13 +49,8 @@ public class WorkerScoringService {
     private static final double CPU_FREE_WEIGHT = 0.5;
     private static final double MEMORY_FREE_WEIGHT = 0.5;
 
-    /**
-     * Score penalty per already-hosted replica of the same service. 25 points
-     * outweighs typical load differences between two healthy workers, so the
-     * spread only collapses onto one worker when the alternatives are much
-     * busier (or gone).
-     */
-    private static final double ANTI_AFFINITY_PENALTY = 25.0;
+    private static final double ANTI_AFFINITY_BASE_PENALTY = 25.0;
+    private static final double ANTI_AFFINITY_DECAY = 0.5;
 
     private record Reservation(long memoryMb, long cpuMillicores) {
         static final Reservation NONE = new Reservation(0, 0);
@@ -160,9 +153,9 @@ public class WorkerScoringService {
     }
 
     /**
-     * Resource score minus the anti-affinity penalty. May go negative - only
-     * the relative order matters, so a lone worker hosting every replica is
-     * still chosen when nothing else is available.
+     * Resource score minus the anti-affinity penalty. Only the relative order
+     * matters, so a lone worker hosting every replica is still chosen when
+     * nothing else is available.
      */
     private double placementScore(WorkerState state,
                                   Map<UUID, Reservation> reservations,
@@ -173,7 +166,22 @@ public class WorkerScoringService {
         UUID workerId = state.getWorker() != null ? state.getWorker().getId() : null;
         long existingReplicas = workerId != null ? replicasOnWorker.getOrDefault(workerId, 0L) : 0L;
 
-        return score - (ANTI_AFFINITY_PENALTY * existingReplicas);
+        return score - antiAffinityPenalty(existingReplicas);
+    }
+
+    /**
+     * Diminishing same-service penalty:
+     * 1 replica => 25, 2 => 37.5, 3 => 43.75, asymptotically approaching 50.
+     * This preserves the initial spread while allowing resource score to matter
+     * more once every worker already hosts the service.
+     */
+    private double antiAffinityPenalty(long existingReplicas) {
+        if (existingReplicas <= 0) {
+            return 0.0;
+        }
+        return ANTI_AFFINITY_BASE_PENALTY
+                * (1 - Math.pow(ANTI_AFFINITY_DECAY, existingReplicas))
+                / (1 - ANTI_AFFINITY_DECAY);
     }
 
     /** Live replicas of the image per worker; empty map when imageId is null (penalty off). */
