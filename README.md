@@ -1,340 +1,680 @@
 # BiCloud
 
-BiCloud is a lightweight, multi-tenant container orchestration platform built
-around Docker. Users sign up, create projects, define services from Docker
-images, choose replica counts and resource limits, and BiCloud schedules those
-containers onto registered worker machines. The platform then exposes the
-services through a dynamic gateway, monitors worker/container health, and
-reconciles runtime state in the background.
+BiCloud is a lightweight, multi-machine container orchestration platform for
+stateless HTTP services. It lets users create projects, define services from
+Docker images, choose replica counts and CPU/RAM limits, deploy those services
+onto registered worker machines, expose them through a dynamic gateway, monitor
+their health, and recover from failures automatically.
 
-The project is best described as a **Kubernetes-inspired mini cloud / mini PaaS**
-for containerized services. It is not Kubernetes itself: there is no
-kube-apiserver, etcd, CNI, Pod API, CRD system, or Kubernetes scheduler. The goal
-is a smaller, readable orchestration platform that implements the core ideas
-needed for a graduation-scale cloud infrastructure project: desired state,
-scheduling, worker agents, health checks, self-healing, service routing, and
-tenant isolation.
+The easiest way to describe the project is:
+
+> BiCloud is a Kubernetes-inspired mini PaaS built from scratch with Spring
+> Boot, Docker, PostgreSQL, Spring Cloud Gateway, and React. It focuses on the
+> core infrastructure ideas behind cloud platforms: desired state, scheduling,
+> worker agents, health checks, self-healing, autoscaling, service discovery,
+> dynamic routing, and tenant network isolation.
+
+BiCloud is not a Kubernetes replacement. It does not implement Kubernetes APIs,
+Pods, CRDs, CNI, kube-proxy, etcd, or a production-grade scheduler. The goal is
+to provide a focused orchestration layer for stateless HTTP services while
+keeping the system compact, operable, and easy to extend.
 
 ## Table of Contents
 
-- [What BiCloud Does](#what-bicloud-does)
-- [Core Features](#core-features)
-- [Architecture](#architecture)
+- [Project Summary](#project-summary)
+- [Design Goals](#design-goals)
+- [Scope](#scope)
+- [High-Level Architecture](#high-level-architecture)
 - [Components](#components)
-- [How It Works](#how-it-works)
-- [Setup and Running](#setup-and-running)
-- [Typical Usage](#typical-usage)
-- [API Overview](#api-overview)
-- [Security and Isolation](#security-and-isolation)
+- [Core Features](#core-features)
+- [Scheduling Model](#scheduling-model)
+- [Autoscaling Model](#autoscaling-model)
+- [Self-Healing and Reconciliation](#self-healing-and-reconciliation)
+- [Networking and Routing](#networking-and-routing)
+- [Security Model](#security-model)
 - [Data Model](#data-model)
-- [Frontend Features](#frontend-features)
-- [Tests](#tests)
-- [Limitations and Notes](#limitations-and-notes)
+- [Frontend](#frontend)
+- [Repository Layout](#repository-layout)
+- [Running Locally](#running-locally)
+- [Multi-Machine Setup](#multi-machine-setup)
+- [Typical Usage Scenario](#typical-usage-scenario)
+- [API Overview](#api-overview)
+- [Testing](#testing)
+- [Limitations and Future Work](#limitations-and-future-work)
 - [Troubleshooting](#troubleshooting)
 
-## What BiCloud Does
+## Project Summary
 
-BiCloud moves Docker container management from single-machine commands into a
-small platform model.
+BiCloud turns Docker from a single-machine tool into a small platform:
 
-With BiCloud:
+1. A user logs into the frontend.
+2. The user creates a project.
+3. The user adds one or more HTTP services using Docker image names.
+4. The user configures replicas, resource limits, environment variables,
+   internet egress, external exposure, and optional autoscaling.
+5. The control plane selects worker machines.
+6. Worker agents create Docker containers on their local machines.
+7. Gateways expose the service to external traffic and mesh-style internal
+   service-to-service calls.
+8. Background schedulers monitor workers, containers, metrics, desired replica
+   counts, and gateway routes.
+9. If something drifts, BiCloud reconciles the system back toward the desired
+   state.
 
-- Users register and authenticate.
-- Each user can create one or more projects.
-- Each project acts as a tenant boundary.
-- A project can contain multiple service definitions.
-- Each service is defined by a Docker image, container port, desired replica
-  count, CPU/RAM limits, environment variables, and optional internet egress.
-- The control plane selects suitable worker nodes.
-- Worker agents create, start, stop, remove, inspect, and monitor Docker
-  containers on their local machines.
-- Gateways route external and internal service traffic to the right containers.
-- Background controllers detect missing replicas, dead containers, offline
-  workers, stale gateway routes, and state drift between the database and Docker.
+The project is intentionally centered on stateless HTTP services. Persistent
+volumes and raw TCP/L4 services are outside the current scope by design.
 
-## Core Features
+## Design Goals
 
-- **Multi-tenant project model:** Each project is treated as a tenant boundary.
-- **User and role management:** The platform supports `USER` and `ADMIN` roles.
-- **JWT authentication:** User-facing APIs are protected with JWT bearer tokens.
-- **Internal API key authentication:** Worker, gateway, and control-plane
-  internal APIs are protected with `X-Api-Key`.
-- **Project and service management:** Create/delete projects, add/update/delete
-  services, deploy projects, undeploy projects, and reset service failure state.
-- **Replica management:** Services can be scaled between 0 and 10 replicas.
-- **CPU-based autoscaling:** Services can define min/max replicas, CPU
-  thresholds, and scale-up/scale-down cooldowns.
-- **Resource limits:** Services define memory and CPU limits.
-- **Environment variables:** Services can define environment variables. The
-  `BICLOUD_` prefix is reserved for platform-managed values.
-- **Score-based scheduling:** Workers are selected using live CPU/RAM usage,
-  database-backed resource reservations, and soft anti-affinity.
-- **Async deployments:** Slow operations such as Docker image pulls run outside
-  request threads.
-- **Self-healing:** Missing replicas are started again, excess replicas are
-  scaled down, and stale `PENDING` rows are failed so they can be retried.
-- **Crash-loop cooldown:** Services with repeated failures are temporarily put
-  into cooldown.
-- **Worker heartbeat:** Workers send regular heartbeat messages. Silent workers
-  become `OFFLINE`, and after a longer grace period their containers are marked
-  `FAILED`.
-- **Container reconciliation:** Worker snapshots are compared with the database.
-  Missing Docker containers are marked `FAILED`; falsely failed but still-running
-  containers can be recovered to `RUNNING`.
-- **Dynamic gateway routing:** Services are exposed with
-  `{service}.{project}.bicloud.local`.
-- **Internal service mesh-style routing:** Containers use `BICLOUD_MESH_BASE` to
-  reach other services in the same project.
-- **Tenant network isolation:** Each project gets its own internal Docker bridge
-  network.
-- **Admin-controlled internet egress:** Containers are isolated from the internet
-  by default. Only admins can enable egress for a service.
-- **Live metrics:** Workers send container CPU/RAM samples to the control plane.
-- **Container logs:** Users can view container log tails from the UI.
-- **Audit trail:** User and system actions are stored in the database.
-- **Admin panel:** Admins can manage users, inspect workers, toggle maintenance
-  mode, and trigger gateway resync.
+BiCloud is designed around a small set of infrastructure goals:
 
-## Architecture
+- deploy stateless HTTP services from Docker images,
+- place replicas across multiple worker machines,
+- make scheduling decisions from resource usage, reservations, and worker
+  health,
+- keep desired state and runtime state reconciled,
+- expose services through dynamic HTTP routing,
+- support internal service discovery between services in the same project,
+- isolate tenants with Docker networks,
+- protect internal machine-to-machine APIs,
+- provide an operational UI for users and administrators.
 
-```text
-                           +------------------------+
-                           |  bicloud-front-end     |
-                           |  React + Vite          |
-                           +-----------+------------+
-                                       |
-                                       | JWT
-                                       v
-                           +------------------------+
-                           | bicloud-control-plane  |
-                           | Spring Boot + Postgres |
-                           | auth, projects,        |
-                           | scheduling, healing    |
-                           +-----+-------------+----+
-                                 |             |
-                         X-Api-Key             | gateway API key
-                                 |             |
-                                 v             v
-        +-----------------------------+   +-----------------------------+
-        | Machine A                   |   | Machine B                   |
-        |                             |   |                             |
-        | +-------------------------+ |   | +-------------------------+ |
-        | | bicloud-worker          | |   | | bicloud-worker          | |
-        | | Spring Boot + Docker    | |   | | Spring Boot + Docker    | |
-        | +------------+------------+ |   | +------------+------------+ |
-        |              |              |   |              |              |
-        |              v              |   |              v              |
-        | +-------------------------+ |   | +-------------------------+ |
-        | | Docker containers       | |   | | Docker containers       | |
-        | | project networks        | |   | | project networks        | |
-        | +------------+------------+ |   | +------------+------------+ |
-        |              ^              |   |              ^              |
-        |              |              |   |              |              |
-        | +------------+------------+ |   | +------------+------------+ |
-        | | bicloud-gateway         |<---->| bicloud-gateway         | |
-        | | Spring Cloud Gateway    | |   | | Spring Cloud Gateway    | |
-        | +-------------------------+ |   | +-------------------------+ |
-        +-----------------------------+   +-----------------------------+
+## Scope
+
+### In Scope
+
+BiCloud supports:
+
+- stateless HTTP services,
+- Docker image based deployment,
+- multiple worker machines,
+- service replicas,
+- CPU and memory limits,
+- CPU-based autoscaling,
+- worker health monitoring,
+- container health monitoring,
+- self-healing,
+- dynamic HTTP routing,
+- project-level network isolation,
+- optional admin-controlled internet egress,
+- internal service-to-service mesh routing,
+- container logs,
+- live container metrics,
+- audit events,
+- user and admin roles.
+
+### Out of Scope by Design
+
+BiCloud currently does not try to support:
+
+- persistent volumes,
+- stateful database hosting as a managed product,
+- raw TCP/L4 routing,
+- UDP services,
+- Kubernetes compatibility,
+- image build pipelines,
+- automatic public DNS management,
+- production certificate automation.
+
+This keeps the project focused: BiCloud is a stateless HTTP service runner, not
+a full cloud provider.
+
+## High-Level Architecture
+
+```mermaid
+flowchart LR
+    USER(("User / Admin"))
+    CLIENT(("HTTP Client"))
+
+    subgraph MAIN["Computer 1 - Main / Control Plane"]
+        FE["bicloud-front-end<br/>React + Vite"]
+        CP["bicloud-control-plane<br/>Spring Boot<br/>auth / scheduling / healing / autoscaling"]
+        DB[("PostgreSQL<br/>BiCloud DB")]
+        GM["bicloud-gateway<br/>edge proxy + mesh proxy"]
+        WM["bicloud-worker<br/>native worker agent"]
+
+        subgraph DM["Docker daemon on main PC"]
+            MN1["project network<br/>bicloud-demo"]
+            MN2["project network<br/>bicloud-payment"]
+            MC["managed service containers"]
+        end
+
+        FE -->|"JWT API"| CP
+        CP <-->|"SQL / JPA"| DB
+        WM -->|"docker-java"| DM
+        GM -->|"joins every local<br/>project network"| MN1
+        GM -->|"joins every local<br/>project network"| MN2
+        MN1 --> MC
+        MN2 --> MC
+    end
+
+    subgraph WORKER["Computer 2 - Worker"]
+        GW["bicloud-gateway<br/>edge proxy + mesh proxy"]
+        WW["bicloud-worker<br/>native worker agent"]
+
+        subgraph DW["Docker daemon on worker PC"]
+            WN1["project network<br/>bicloud-demo"]
+            WN2["project network<br/>bicloud-payment"]
+            WC["managed service containers"]
+        end
+
+        WW -->|"docker-java"| DW
+        GW -->|"joins every local<br/>project network"| WN1
+        GW -->|"joins every local<br/>project network"| WN2
+        WN1 --> WC
+        WN2 --> WC
+    end
+
+    USER -->|"opens dashboard"| FE
+    CLIENT -->|"Host: service.project.bicloud.local"| GM
+    CLIENT -->|"same host can enter here too"| GW
+
+    CP -->|"create / stop / restart / logs"| WM
+    CP -->|"create / stop / restart / logs"| WW
+    WM -->|"register / heartbeat<br/>snapshots / metrics / status"| CP
+    WW -->|"register / heartbeat<br/>snapshots / metrics / status"| CP
+
+    CP -->|"route register / deregister / resync"| GM
+    CP -->|"route register / deregister / resync"| GW
+    GM -->|"service discovery<br/>gateway resync request"| CP
+    GW -->|"service discovery<br/>gateway resync request"| CP
+
+    GM <-->|"gateway mesh forwarding"| GW
+
+    classDef actor fill:#f8fafc,stroke:#475569,color:#0f172a;
+    classDef control fill:#dbeafe,stroke:#2563eb,color:#0f172a;
+    classDef database fill:#ede9fe,stroke:#7c3aed,color:#0f172a;
+    classDef gateway fill:#dcfce7,stroke:#16a34a,color:#0f172a;
+    classDef worker fill:#fef3c7,stroke:#d97706,color:#0f172a;
+    classDef docker fill:#f1f5f9,stroke:#64748b,color:#0f172a;
+
+    class USER,CLIENT actor;
+    class FE,CP control;
+    class DB database;
+    class GM,GW gateway;
+    class WM,WW worker;
+    class DM,DW,MN1,MN2,WN1,WN2,MC,WC docker;
 ```
 
-The control plane is the central authority. Workers apply the desired state to
-local Docker daemons. Gateways keep route state in memory and use the control
-plane discovery endpoint when a request must be forwarded to another machine.
+There are two main traffic paths:
+
+- **Control traffic:** frontend -> control plane <-> workers/gateways. These
+  calls configure desired state, schedule replicas, create containers, update
+  gateway routes, replay routes after gateway restart, and report
+  heartbeat/metrics.
+- **Application traffic:** external HTTP clients -> gateway -> service
+  container. If the target replica is on another machine, the local gateway can
+  forward the request to the remote gateway.
+
+The gateway is intentionally attached to every managed project Docker network on
+its own machine. This is the core routing idea: application containers stay
+isolated inside project networks, while one trusted gateway container can enter
+those networks and proxy HTTP traffic to the correct service instance. A gateway
+does not directly join Docker networks on another machine; cross-machine traffic
+goes gateway -> gateway over the mesh, then the remote gateway enters its own
+local Docker networks.
+
+### Control Plane
+
+The control plane is the source of truth. It owns:
+
+- users,
+- projects,
+- service definitions,
+- worker records,
+- container instance records,
+- audit events,
+- scheduling decisions,
+- autoscaling decisions,
+- self-healing and reconciliation loops.
+
+It stores persistent state in PostgreSQL.
+
+### Worker
+
+Each worker runs on a machine that can execute Docker containers. The worker:
+
+- registers with the control plane,
+- reports heartbeat and machine resource usage,
+- creates containers,
+- applies CPU/RAM limits,
+- creates Docker networks,
+- enforces project isolation,
+- sends container snapshots and metrics,
+- reports dead containers,
+- exposes log/stop/remove operations to the control plane.
+
+### Gateway
+
+Each machine runs a gateway container. The gateway:
+
+- receives route registrations from the control plane,
+- exposes services as HTTP hostnames,
+- load-balances between local service replicas,
+- forwards traffic to another machine's gateway when needed,
+- provides internal mesh-style service discovery,
+- joins every managed project Docker network on its own machine,
+- acts as the trusted bridge between isolated service networks and HTTP traffic,
+- prunes stale route entries.
+
+### Frontend
+
+The frontend is the management interface for users and admins. It exposes:
+
+- projects,
+- services,
+- deployments,
+- scaling,
+- autoscaling policy configuration,
+- workers,
+- containers,
+- logs,
+- metrics,
+- audit timeline,
+- admin user management.
 
 ## Components
 
 | Component | Stack | Responsibility |
 | --- | --- | --- |
-| `bicloud-control-plane` | Java 21, Spring Boot, Spring Security, JPA, PostgreSQL | Users, projects, services, workers, containers, scheduling, self-healing, audit |
-| `bicloud-worker` | Java 21, Spring Boot, docker-java | Per-machine Docker container lifecycle, networks, logs, metrics, heartbeat |
-| `bicloud-gateway` | Java 21, Spring Cloud Gateway, WebFlux, docker-java | Dynamic routing, round-robin load balancing, mesh routing, gateway resync |
-| `bicloud-front-end` | React 19, Vite, Axios, React Router | User and admin management UI |
-| Compose files | Docker Compose | Role/OS-specific gateway and PostgreSQL startup |
+| `bicloud-control-plane` | Java 21, Spring Boot, Spring Security, JPA, PostgreSQL | Central API, auth, projects, services, workers, scheduling, autoscaling, self-healing, audit |
+| `bicloud-worker` | Java 21, Spring Boot, docker-java | Per-machine Docker lifecycle, networks, logs, metrics, heartbeat |
+| `bicloud-gateway` | Java 21, Spring Cloud Gateway, WebFlux, docker-java | Dynamic HTTP routing, mesh routing, gateway resync, network discovery |
+| `bicloud-front-end` | React 19, Vite, Axios, React Router | User/admin dashboard and project operations UI |
+| Compose files | Docker Compose | Role/OS-specific PostgreSQL and gateway startup |
 
-### Repository Layout
+## Core Features
+
+### Authentication and Roles
+
+- Users authenticate with JWT.
+- Passwords are stored using BCrypt.
+- There are two roles: `USER` and `ADMIN`.
+- Normal users manage their own projects.
+- Admins can manage users, inspect all workers, drain/resume workers, and
+  trigger gateway resync.
+
+### Project and Service Management
+
+- A project represents a tenant.
+- A service belongs to a project.
+- Each service defines:
+  - Docker image,
+  - service name,
+  - container port,
+  - desired replicas,
+  - CPU limit,
+  - memory limit,
+  - environment variables,
+  - external exposure policy,
+  - internet egress policy,
+  - autoscaling policy.
+
+### Replica Management
+
+- Users can scale a service from 0 to 10 replicas.
+- Scale-up starts missing replicas asynchronously.
+- Scale-down deregisters excess containers from the gateway, stops them on the
+  worker, removes them, and marks them as `STOPPED`.
+- Self-healing keeps actual replicas close to desired replicas.
+
+### Autoscaling
+
+- Autoscaling is configured per service.
+- It uses container CPU metrics.
+- It stores recent service-level CPU samples.
+- It scales up by +1 when the recent average is above the target threshold.
+- It scales down by -1 when the recent average is below the scale-down
+  threshold.
+- Cooldowns prevent rapid oscillation.
+
+### Worker Scheduling
+
+Worker selection uses:
+
+- live CPU usage,
+- live memory usage,
+- reserved CPU/RAM from already assigned `RUNNING` and `PENDING` containers,
+- same-service soft anti-affinity,
+- worker health status.
+
+This means BiCloud does not blindly round-robin. It tries to spread replicas,
+but still prefers healthier and emptier workers.
+
+### Tenant Isolation
+
+- Each project gets its own Docker bridge network.
+- Project networks are internal by default.
+- Containers are removed from Docker's default `bridge` network before start.
+- Services cannot reach the public internet unless an admin enables egress.
+- Internal mesh routing rejects cross-project access.
+
+### Dynamic Gateway Routing
+
+External route format:
 
 ```text
-.
-|-- bicloud-control-plane/   # Central API, database model, schedulers
-|-- bicloud-worker/          # Worker node agent
-|-- bicloud-gateway/         # Dynamic gateway and mesh proxy
-|-- bicloud-front-end/       # React SPA
-|-- docs/                    # Architecture, review, and security notes
-|-- docker-compose.main-windows.yml  # Main/control-plane Windows PC: PostgreSQL + gateway
-|-- docker-compose.main-ubuntu.yml   # Main/control-plane Ubuntu PC: PostgreSQL + socket-proxy + gateway
-|-- docker-compose.worker-windows.yml# Worker Windows PC: gateway only
-|-- docker-compose.worker-ubuntu.yml # Worker Ubuntu PC: socket-proxy + gateway only
-|-- .env.*.example           # Role/OS-specific compose environment examples
-`-- README.md
+http://{service}.{project}.bicloud.local:9000
 ```
 
-## How It Works
+Example:
 
-### 1. User and Project Flow
+```text
+http://api.demo.bicloud.local:9000
+```
 
-1. A user registers with `/auth/register` or logs in with `/auth/login`.
-2. The frontend sends the JWT as `Authorization: Bearer ...`.
-3. The user creates a project.
-4. The project name must be globally unique. It is used as the tenant identity
-   for Docker networks, gateway route keys, mesh paths, and service discovery.
-5. The user defines one or more services inside the project.
-6. When deployed, the control plane schedules service replicas onto workers.
+For local testing without DNS:
 
-### 2. Service Deployment Flow
+```powershell
+curl -H "Host: api.demo.bicloud.local" http://localhost:9000/
+```
 
-1. The frontend calls `POST /project/{id}/deploy`.
-2. The control plane loads all service definitions in the project.
-3. Each service deployment is queued asynchronously.
-4. `DeploymentService` calculates how many `RUNNING` or `PENDING` replicas
-   already exist.
-5. If more replicas are needed, `WorkerScoringService` selects a worker.
-6. The control plane first creates a `PENDING` `ContainerInstance` row. This is
-   visible to the UI and also works as a scheduling reservation.
-7. The control plane calls the selected worker's `/api/containers/create`
-   endpoint.
-8. The worker pulls the Docker image if it is not already present locally.
-9. The worker creates or verifies the project network, connects the container to
-   it, removes the container from Docker's default `bridge` network, and starts
-   the container.
-10. The worker returns the Docker container ID and the container's internal IP.
-11. The control plane marks the instance `RUNNING`.
-12. The control plane registers the instance with the gateway running on the
-   same machine as the worker.
-13. The gateway adds the instance to its in-memory route registry.
+### Internal Mesh Routing
 
-### 3. Scheduling Logic
+BiCloud injects this environment variable into containers:
 
-Worker selection does not rely only on instantaneous OS usage. BiCloud combines:
+```text
+BICLOUD_MESH_BASE=http://bicloud-gateway:9000/_bicloud/mesh/{project}
+```
 
-- Live CPU/RAM usage from worker heartbeats.
-- Database reservations calculated from `RUNNING` and `PENDING` container
-  resource limits.
+A container in project `demo` can call service `payment` like this:
 
-Because a `PENDING` row is committed before the worker call, a burst of deploys
-does not keep selecting the same worker before CPU usage has had time to rise.
+```text
+${BICLOUD_MESH_BASE}/payment/api/health
+```
 
-BiCloud also applies soft anti-affinity for replicas of the same service. When
-possible, replicas are spread across different workers. If only one worker is
-available, scheduling can still place all replicas there.
+If the target service is on another worker machine, the local gateway discovers
+the remote endpoint through the control plane and forwards the request to the
+remote gateway.
 
-### 4. Scale, Update, and Undeploy
+## Scheduling Model
 
-- **Scale up:** `desiredReplicas` is increased and missing replicas are started
-  asynchronously.
-- **Scale down:** Extra containers are deregistered from the gateway, stopped on
-  the worker, removed, and marked `STOPPED`.
-- **Scale to zero:** Replica count becomes 0. Self-healing does not restart the
-  service.
-- **Update service:** Image, port, resource limits, environment variables, or
-  internet egress settings are changed. Existing containers are stopped and the
-  service is redeployed with the new configuration.
-- **Undeploy project:** Services are marked `stoppedByUser=true`, so
-  self-healing does not resurrect them.
-- **Delete project/service:** Containers are stopped first, then database records
-  are deleted.
+The scheduler assigns each active worker a placement score.
 
-### 5. Autoscaling
+At a high level:
 
-Autoscaling is configured per service. When enabled, each autoscaler round
-samples fresh container CPU metrics, normalizes CPU usage against the configured
-`cpuLimit`, and stores one service-level CPU sample: the average normalized CPU
-across that service's currently running replicas. Scale decisions use the
-average of the last 4 service-level samples, so a short spike does not
-immediately change replica count.
+```text
+resourceScore = 0.5 * freeCpuPercent + 0.5 * freeMemoryPercent
+placementScore = resourceScore - sameServicePenalty
+```
 
-- If the 4-sample average CPU is above `targetCpuPercent`, BiCloud scales up by
-  one replica after the scale-up cooldown has elapsed.
-- If the 4-sample average CPU is below `scaleDownCpuPercent`, BiCloud scales
-  down by one replica after the scale-down cooldown has elapsed.
-- If a replica is already `PENDING`, autoscaling waits for deployment to settle
-  before making another decision.
-- Self-healing still owns convergence: autoscaling changes desired state, then
-  deployment/self-healing reconciles actual containers to that target.
+Resource usage uses the more pessimistic value between:
 
-### 6. Self-Healing and Reconciliation
+- live OS usage from heartbeat,
+- reserved resources from `RUNNING` and `PENDING` containers.
 
-The control plane runs several background loops:
+Same-service anti-affinity uses a diminishing penalty:
 
-- Worker health check: every 20 seconds, stale worker heartbeats are detected.
-- Self-healing: every 30 seconds, desired replica counts are compared with
-  current `RUNNING`/`PENDING` counts.
-- Autoscaling: every 30 seconds, services with autoscaling enabled are evaluated
-  against recent CPU metrics.
-- Metrics cleanup: silent metric series are removed after 10 minutes.
+```text
+0 existing replicas -> 0
+1 existing replica  -> 25
+2 existing replicas -> 37.5
+3 existing replicas -> 43.75
+4 existing replicas -> 46.875
+5 existing replicas -> 48.4375
+```
 
-The worker runs:
+The first colocated replica strongly encourages spreading to another worker.
+After the service is already spread, the penalty grows more slowly, allowing
+resource availability to dominate.
+
+Example with two similar workers:
+
+```text
+Replica 1 -> Worker A
+Replica 2 -> Worker B because Worker A now has same-service penalty
+Replica 3 -> whichever worker has the better placement score
+```
+
+This is soft anti-affinity, not a hard rule. If only one worker is active, or if
+one worker is much healthier than the other, BiCloud can still place multiple
+replicas on the same worker.
+
+## Autoscaling Model
+
+Autoscaling is intentionally conservative.
+
+Each autoscaler round:
+
+1. Reads live container metrics.
+2. Normalizes CPU usage against the service CPU limit.
+3. Produces one service-level average CPU sample across running replicas.
+4. Keeps the last 4 samples.
+5. Makes a decision using the average of those 4 samples.
+
+Default behavior:
+
+- If the 4-sample average is above `targetCpuPercent`, scale up by +1 after the
+  scale-up cooldown.
+- If the 4-sample average is below `scaleDownCpuPercent`, scale down by -1
+  after the scale-down cooldown.
+- If any replica is already `PENDING`, autoscaling waits for deployment to
+  settle.
+
+This avoids reacting to a single short CPU spike.
+
+## Self-Healing and Reconciliation
+
+BiCloud uses periodic background loops instead of trying to make every operation
+perfectly transactional across HTTP, Docker, PostgreSQL, and gateways.
+
+### Control-Plane Loops
+
+- Worker health check every 20 seconds.
+- Self-healing every 30 seconds.
+- Autoscaling every 30 seconds.
+- Metrics cleanup after stale series are silent.
+
+### Worker Loops
 
 - Heartbeat every 5 seconds.
-- Container health checks every 10 seconds.
-- Container snapshots every 20 seconds.
+- Container health check every 10 seconds.
+- Container snapshot and metrics report every 15-20 seconds depending on
+  configuration.
 
-The gateway runs:
+### Gateway Loops
 
 - Route registry reconciliation.
 - Docker network scanning.
-- Control-plane route resync requests after restarts or missed notifications.
-- Stale route pruning based on local Docker network reality.
+- Control-plane resync after startup.
+- Stale route pruning based on Docker network reality.
 
-## Setup and Running
+### What Self-Healing Fixes
+
+Self-healing handles cases such as:
+
+- a container is missing,
+- a container died,
+- a worker became offline,
+- a `PENDING` replica stayed pending too long,
+- a service has fewer replicas than desired,
+- a service has more replicas than desired,
+- a container was falsely marked failed but is still running.
+
+Repeated deploy failures trigger crash-loop cooldown so a bad image or bad
+configuration does not cause endless retry spam.
+
+## Networking and Routing
+
+### Project Networks
+
+For project `demo`, the worker creates:
+
+```text
+bicloud-demo
+```
+
+That network is internal. Containers attached only to this network cannot reach
+the public internet.
+
+### Egress Network
+
+If an admin enables internet egress for a service, the worker also attaches the
+container to:
+
+```text
+bicloud-egress-demo
+```
+
+The egress network is project-specific. Projects do not share one public egress
+bridge.
+
+### External Ingress
+
+The gateway routes host-based HTTP traffic:
+
+```text
+Host: api.demo.bicloud.local
+```
+
+The route key is:
+
+```text
+projectName:serviceName
+```
+
+The gateway uses round-robin among registered local instances. If no local
+instance exists, mesh forwarding and control-plane discovery are used.
+
+### Internal Mesh
+
+Internal mesh calls are scoped to the caller's project. The gateway derives the
+caller project from Docker network/subnet information and rejects cross-project
+calls.
+
+## Security Model
+
+### User-Facing Security
+
+- JWT authentication for frontend/control-plane calls.
+- BCrypt password hashing.
+- Role-based authorization.
+- User-level ownership checks for projects.
+- Admin-only endpoints for user management and worker maintenance.
+
+### Internal Security
+
+Internal APIs are not open:
+
+- Workers call the control plane with `X-Api-Key`.
+- Gateways call the control plane with `X-Api-Key`.
+- The control plane calls gateways with the gateway API key.
+- Gateway-to-gateway mesh forwarding uses the gateway API key.
+- API key comparison is constant-time.
+
+### Container Hardening
+
+When creating containers, workers apply:
+
+- CPU limit,
+- memory limit,
+- dropped Linux capabilities by default,
+- a small allow-list of required capabilities,
+- PID limit,
+- project network isolation,
+- fail-closed default bridge removal.
+
+Fail-closed means: if the worker cannot verify that the container was detached
+from Docker's default internet-capable bridge, it refuses to start the
+container and cleans it up.
+
+## Data Model
+
+Persistent state is stored in PostgreSQL.
+
+| Table | Purpose |
+| --- | --- |
+| `bicloud_users` | Users, password hashes, roles |
+| `user_projects` | Tenant/project records |
+| `project_images` | Service definitions and autoscaling policy |
+| `project_image_env_vars` | Service environment variables |
+| `container_instances` | Runtime container records |
+| `worker_nodes` | Worker identity and capacity |
+| `worker_states` | Worker IP, heartbeat, metrics, status |
+| `audit_events` | User and system events |
+
+Runtime-only state:
+
+- container metric history is kept in memory,
+- gateway route registry is in memory,
+- gateway subnet map is built from Docker network scans,
+- frontend auth state is stored in browser session storage.
+
+## Frontend
+
+The React frontend provides an operational console for users and administrators.
+
+### User Pages
+
+- Login and registration.
+- Dashboard summary.
+- Project list.
+- Project detail page.
+- Services tab.
+- Containers tab.
+- Activity/audit tab.
+- Add/edit/delete service.
+- Deploy/undeploy project.
+- Scale service.
+- Configure autoscaling.
+- View service metrics.
+- View container logs.
+- Stop/remove containers.
+
+### Admin Pages
+
+- System overview.
+- User management.
+- Worker inventory.
+- Worker detail.
+- Worker maintenance/drain toggle.
+- Gateway resync.
+- Audit feed.
+
+## Repository Layout
+
+```text
+.
+|-- bicloud-control-plane/       # Central API, database model, schedulers
+|-- bicloud-worker/              # Worker node agent
+|-- bicloud-gateway/             # Dynamic gateway and mesh proxy
+|-- bicloud-front-end/           # React SPA
+|-- docs/                        # Commit and project notes
+|-- docker-compose.main-windows.yml
+|-- docker-compose.main-ubuntu.yml
+|-- docker-compose.worker-windows.yml
+|-- docker-compose.worker-ubuntu.yml
+|-- .env.main-windows.example
+|-- .env.main-ubuntu.example
+|-- .env.worker-windows.example
+|-- .env.worker-ubuntu.example
+`-- README.md
+```
+
+## Running Locally
 
 ### Requirements
 
 - Java 21+
-- Docker
+- Maven or Maven Wrapper
+- Docker Desktop / Docker Engine
 - Docker Compose
-- PostgreSQL 14+ or PostgreSQL through Docker
+- PostgreSQL 14+ or the provided PostgreSQL compose service
 - Node.js 20+ and npm
-- For multi-machine deployments: flat L3 connectivity between machines. A
-  Tailscale-style overlay network is enough.
 
 Default ports:
 
-| Service | Default port |
+| Service | Port |
 | --- | --- |
 | Control plane | `8080` |
 | Worker | `8081` |
 | Gateway | `9000` |
 | Frontend dev server | `5173` |
-| Frontend production Nginx | `80` |
+| PostgreSQL | `5432` |
 
-### 1. Start PostgreSQL
+### 1. Create Local Configuration
 
-For local development on the main Windows PC, PostgreSQL can be started with:
-
-```powershell
-Copy-Item .env.main-windows.example .env
-docker compose -f docker-compose.main-windows.yml up -d bicloud-postgres
-```
-
-Default local connection details:
-
-```text
-Host: localhost
-Port: 5432
-Database: bicloud
-Username: postgres
-Password: postgres
-```
-
-The data is stored in the named Docker volume `bicloud-postgres-data`.
-
-If you use an existing PostgreSQL installation, create a database named
-`bicloud`.
-
-### 2. Create Configuration Files
-
-Copy the example files into real configuration files. Choose the `.env`
-example that matches the current machine:
-
-| Machine | Env example |
-| --- | --- |
-| Main Windows PC | `.env.main-windows.example` |
-| Main Ubuntu PC | `.env.main-ubuntu.example` |
-| Worker Windows PC | `.env.worker-windows.example` |
-| Worker Ubuntu PC | `.env.worker-ubuntu.example` |
-
-If you already copied `.env` while starting PostgreSQL, you do not need to copy
-it again.
+Copy examples into real local files:
 
 PowerShell:
 
@@ -360,7 +700,39 @@ cp bicloud-gateway/src/main/resources/application.properties.example \
    bicloud-gateway/src/main/resources/application.properties
 ```
 
-### 3. Fill Secrets and Addresses
+Real local files are gitignored.
+
+### 2. Start PostgreSQL
+
+Main Windows PC:
+
+```powershell
+docker compose -f docker-compose.main-windows.yml up -d bicloud-postgres
+```
+
+Main Ubuntu PC:
+
+```bash
+docker compose -f docker-compose.main-ubuntu.yml up -d bicloud-postgres
+```
+
+Default local database values:
+
+```text
+Host: localhost
+Port: 5432
+Database: bicloud
+Username: postgres
+Password: postgres
+```
+
+The Docker volume is:
+
+```text
+bicloud-postgres-data
+```
+
+### 3. Configure Secrets and Addresses
 
 Control-plane `application.properties`:
 
@@ -369,16 +741,13 @@ spring.datasource.url=jdbc:postgresql://localhost:5432/bicloud
 spring.datasource.username=postgres
 spring.datasource.password=postgres
 
-# Shared key for worker/gateway access to control-plane internal endpoints.
 bicloud.api-key=CHANGE_ME_WORKER_CP_KEY
-
-# Used by the control plane when calling /gateway/register and /gateway/deregister.
 bicloud.gateway.url=http://localhost:9000
 bicloud.gateway.port=9000
 bicloud.gateway.api-key=CHANGE_ME_GATEWAY_KEY
 
-# Use a random secret with at least 32 characters.
 jwt.secret=CHANGE_ME_MIN_32_CHARS
+jwt.expiration=86400000
 ```
 
 Worker `application.properties`:
@@ -387,35 +756,27 @@ Worker `application.properties`:
 server.port=8081
 worker.name=worker-1
 worker.control-plane-url=http://CONTROL_PLANE_IP:8080
+bicloud.api-key=CHANGE_ME_WORKER_CP_KEY
 
 # Windows Docker Desktop:
 docker.host=npipe:////./pipe/docker_engine
 
-# Ubuntu/Linux:
+# Linux alternative:
 # docker.host=unix:///var/run/docker.sock
-
-# Must match control-plane bicloud.api-key.
-bicloud.api-key=CHANGE_ME_WORKER_CP_KEY
 ```
 
 Gateway `application.properties`:
 
 ```properties
 server.port=9000
-
-# Used for gateway management and gateway-to-gateway requests.
-# Must match control-plane bicloud.gateway.api-key.
 bicloud.gateway.api-key=CHANGE_ME_GATEWAY_KEY
-
 bicloud.gateway.container-name=bicloud-gateway
 bicloud.gateway.docker-host=unix:///var/run/docker.sock
 bicloud.control-plane.url=http://CONTROL_PLANE_IP:8080
-
-# Must match control-plane bicloud.api-key.
 bicloud.control-plane.api-key=CHANGE_ME_WORKER_CP_KEY
 ```
 
-The machine-local `.env` is used by the selected compose file:
+Root `.env` for compose:
 
 ```env
 BICLOUD_CONTROL_PLANE_URL=http://CONTROL_PLANE_IP:8080
@@ -423,91 +784,91 @@ BICLOUD_CONTROL_PLANE_API_KEY=CHANGE_ME_WORKER_CP_KEY
 BICLOUD_GATEWAY_API_KEY=CHANGE_ME_GATEWAY_KEY
 ```
 
-Spring Boot relaxed binding maps environment variables such as
-`BICLOUD_CONTROL_PLANE_URL` to `bicloud.control-plane.url` and
-`BICLOUD_GATEWAY_API_KEY` to `bicloud.gateway.api-key`.
-
-`BICLOUD_CONTROL_PLANE_API_KEY` maps to `bicloud.control-plane.api-key`; the
-gateway uses it for control-plane discovery and resync calls.
-
-### 4. Run the Services in Development Mode
-
-#### Control Plane
+### 4. Run the Control Plane
 
 PowerShell:
 
 ```powershell
 cd bicloud-control-plane
-.\mvnw.cmd spring-boot:run
+mvn spring-boot:run
 ```
 
-Linux/macOS:
+Bash:
 
 ```bash
 cd bicloud-control-plane
-./mvnw spring-boot:run
+mvn spring-boot:run
 ```
 
-The control plane uses Hibernate `ddl-auto=update`, so tables are created or
-updated automatically.
+### 5. Build and Start the Gateway
 
-#### Worker
-
-Run a worker on each machine that should execute containers:
-
-```powershell
-cd bicloud-worker
-.\mvnw.cmd spring-boot:run
-```
-
-On startup, the worker registers with the control plane and writes its stable
-ID to `worker-id.txt`. On restart, it reuses the same worker identity.
-
-#### Gateway / Compose Roles
-
-The gateway needs access to Docker networks, so it is normally run as a Docker
-container. The Java control plane and worker can still be run natively with
-Maven or packaged jars; the compose files below handle PostgreSQL and the local
-gateway for each machine role.
-
-The gateway Dockerfile expects a built jar under `target`, so package it first:
+The gateway Dockerfile expects a built jar under `target`.
 
 ```powershell
 cd bicloud-gateway
-.\mvnw.cmd package -DskipTests
+mvn package -DskipTests
 cd ..
 ```
 
-Use the compose file that matches the machine:
+Windows main PC:
 
 ```powershell
-# Main/control-plane Windows PC: PostgreSQL + gateway
 docker compose -f docker-compose.main-windows.yml up --build -d
+```
 
-# Worker Windows PC: gateway only
+Windows worker PC:
+
+```powershell
 docker compose -f docker-compose.worker-windows.yml up --build -d
 ```
 
-```bash
-# Main/control-plane Ubuntu PC: PostgreSQL + socket-proxy + gateway
-docker compose -f docker-compose.main-ubuntu.yml up --build -d
+Ubuntu main PC:
 
-# Worker Ubuntu PC: socket-proxy + gateway only
+```bash
+docker compose -f docker-compose.main-ubuntu.yml up --build -d
+```
+
+Ubuntu worker PC:
+
+```bash
 docker compose -f docker-compose.worker-ubuntu.yml up --build -d
 ```
 
-On Windows Docker Desktop, the gateway compose files assume Docker daemon
-access through `tcp://host.docker.internal:2375`. If that TCP endpoint is not
-enabled, the gateway will not be able to manage Docker networks. Ubuntu files
-use the included `bicloud-socket-proxy` service instead.
+Docker access notes:
 
-Gateway health check:
+- Windows gateway compose files use
+  `tcp://host.docker.internal:2375`. Docker Desktop must expose the daemon on
+  localhost TCP for the gateway to manage project networks.
+- Do not open Docker port `2375` to the public network. Keep it local to the
+  machine.
+- Ubuntu compose files use `bicloud-socket-proxy`, which exposes only the Docker
+  network operations the gateway needs.
+
+Gateway health:
 
 ```powershell
 curl http://localhost:9000/gateway/health
 ```
 
-#### Frontend
+### 6. Run the Worker
+
+Run a worker on each machine that should execute containers:
+
+```powershell
+cd bicloud-worker
+mvn spring-boot:run
+```
+
+On first startup, the worker registers with the control plane and stores a
+stable ID in:
+
+```text
+bicloud-worker/worker-id.txt
+```
+
+This file is gitignored.
+
+### 7. Run the Frontend
 
 ```powershell
 cd bicloud-front-end
@@ -515,384 +876,413 @@ npm install
 npm run dev
 ```
 
-The Vite dev server runs at:
+Open:
 
 ```text
 http://localhost:5173
 ```
 
-In development, Vite proxies `/api-cp/*` to `http://localhost:8080/*`.
+### 8. First Admin User
 
-### 5. First Admin User
+Normal registration creates a `USER`. To create the first admin in local
+development:
 
-The public registration endpoint creates a normal `USER`. The
-`POST /auth/admin/register` endpoint requires an existing admin. The current
-codebase does not include an automatic first-admin bootstrap mechanism.
-
-For local development:
-
-1. Register the first user through the UI or `/auth/register`.
-2. Promote that user in PostgreSQL:
+1. Register a user from the UI.
+2. Promote the user in PostgreSQL:
 
 ```sql
 UPDATE bicloud_users
 SET role = 'ADMIN'
-WHERE username = 'admin_username';
+WHERE username = 'your_username';
 ```
 
-For production-like usage, a proper seed/bootstrap mechanism should be added.
+## Multi-Machine Setup
 
-## Typical Usage
+BiCloud is designed to run across multiple PCs.
 
-1. Open the frontend: `http://localhost:5173`.
-2. Register or log in.
-3. Create a project.
-   - Example project name: `demo`
-   - The name must start with a lowercase letter, contain only lowercase
-     letters, digits, and hyphens, and must not start with `bicloud-` or
-     `egress-`.
-4. Add a service in the project.
-   - Example service name: `api`
-   - Image: `nginx:alpine` or your own image
-   - Container port: `80`
-   - Replicas: `1`
-   - Memory: `128`
-   - CPU: `0.5`
-5. Click Deploy.
-6. The worker pulls the image if needed and starts the container.
-7. The service detail page shows replica health, endpoints, metrics,
-   environment variables, and container instances.
+### Main PC
 
-External access uses the gateway host format:
+The main PC usually runs:
 
-```text
-http://api.demo.bicloud.local:9000
-```
+- PostgreSQL,
+- control plane,
+- frontend,
+- gateway,
+- optionally a worker.
 
-For local testing without DNS or hosts-file entries, send the Host header
-manually:
+Use:
 
 ```powershell
-curl -H "Host: api.demo.bicloud.local" http://localhost:9000/
+docker compose -f docker-compose.main-windows.yml up --build -d
 ```
 
-Inside a container, BiCloud injects:
+or:
+
+```bash
+docker compose -f docker-compose.main-ubuntu.yml up --build -d
+```
+
+### Worker PC
+
+A worker PC usually runs:
+
+- worker app,
+- gateway,
+- Docker daemon.
+
+It does not need PostgreSQL.
+
+Use:
+
+```powershell
+docker compose -f docker-compose.worker-windows.yml up --build -d
+```
+
+or:
+
+```bash
+docker compose -f docker-compose.worker-ubuntu.yml up --build -d
+```
+
+### Network Requirements
+
+Machines must reach each other over HTTP:
+
+- workers must reach the control plane,
+- control plane must reach workers,
+- control plane must reach gateways,
+- gateways must reach other gateways.
+
+A Tailscale-style private network is enough. Configure:
 
 ```text
-BICLOUD_MESH_BASE=http://bicloud-gateway:9000/_bicloud/mesh/demo
+CONTROL_PLANE_IP=<main machine private IP>
 ```
 
-To reach service `api` from another service in the same project:
+Then set:
 
 ```text
-${BICLOUD_MESH_BASE}/api/health
+BICLOUD_CONTROL_PLANE_URL=http://CONTROL_PLANE_IP:8080
+worker.control-plane-url=http://CONTROL_PLANE_IP:8080
 ```
 
-This address works even if the target service runs on another worker machine.
+## Typical Usage Scenario
+
+This flow shows the main runtime capabilities of the platform.
+
+### 1. Start the Platform
+
+Start:
+
+- PostgreSQL,
+- control plane,
+- gateway,
+- worker,
+- frontend.
+
+Show the worker inventory page and explain that the worker has registered
+itself with the control plane.
+
+### 2. Create a Project
+
+Create:
+
+```text
+Project: demo
+```
+
+Explain that a project is a tenant boundary and will get its own Docker network.
+
+### 3. Add a Service
+
+Example:
+
+```text
+Service: web
+Image: nginx:alpine
+Port: 80
+Replicas: 2
+Memory: 128 MB
+CPU: 0.5
+Expose externally: true
+Allow internet: false
+```
+
+Deploy it.
+
+### 4. Show Routing
+
+Call:
+
+```powershell
+curl -H "Host: web.demo.bicloud.local" http://localhost:9000/
+```
+
+Explain dynamic gateway routing.
+
+### 5. Scale the Service
+
+Scale from 2 to 5 replicas.
+
+Show:
+
+- new container instances,
+- worker distribution,
+- gateway route count,
+- metrics.
+
+### 6. Demonstrate Self-Healing
+
+Manually stop/remove a managed Docker container or stop a worker.
+
+Then show:
+
+- the container becomes failed/offline,
+- self-healing starts a replacement,
+- desired replica count is restored.
+
+### 7. Demonstrate Autoscaling
+
+Enable autoscaling:
+
+```text
+minReplicas: 1
+maxReplicas: 5
+targetCpuPercent: 70
+scaleDownCpuPercent: 30
+```
+
+Apply load to the service and show that BiCloud changes desired replicas over
+time.
+
+### 8. Demonstrate Admin Controls
+
+Show:
+
+- worker maintenance mode,
+- user management,
+- audit events,
+- gateway resync.
 
 ## API Overview
 
-### User-Facing Control-Plane APIs
+### User-Facing Control Plane
 
-These endpoints use JWT authentication. Except for login/register, requests
-must include `Authorization: Bearer <token>`.
+These endpoints use JWT authentication except login/register.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/auth/register` | Create a normal user |
-| `POST` | `/auth/login` | Get a JWT token |
-| `GET` | `/auth/me` | Get the current user |
-| `POST` | `/auth/admin/register` | Create an admin user; admin-only |
-| `POST` | `/project` | Create a project |
+| `POST` | `/auth/register` | Register normal user |
+| `POST` | `/auth/login` | Login |
+| `GET` | `/auth/me` | Current user |
+| `POST` | `/auth/admin/register` | Create admin user |
+| `POST` | `/project` | Create project |
 | `GET` | `/project` | List projects |
-| `GET` | `/project/{id}` | Get project details |
-| `DELETE` | `/project/{id}` | Delete a project and its services |
-| `POST` | `/project/image` | Add a service to a project |
-| `PUT` | `/project/image/{imageId}` | Update service configuration |
-| `DELETE` | `/project/image/{imageId}` | Delete a service |
-| `POST` | `/project/{id}/deploy` | Deploy a project |
-| `POST` | `/project/{id}/undeploy` | Stop all containers in a project |
-| `PUT` | `/project/image/{imageId}/scale` | Change replica count |
-| `POST` | `/project/image/{imageId}/reset-failures` | Reset service failure counters |
-| `GET` | `/containers/project/{projectId}` | List project containers |
-| `GET` | `/containers/project/{projectId}/search` | Search/filter/paginate containers |
-| `GET` | `/containers/project/{projectId}/metrics` | Get container metrics |
-| `POST` | `/containers/{instanceId}/stop` | Stop a container |
-| `DELETE` | `/containers/{instanceId}` | Stop and remove a container |
-| `GET` | `/containers/{instanceId}/logs` | Get container log tail |
+| `GET` | `/project/{id}` | Project detail |
+| `DELETE` | `/project/{id}` | Delete project |
+| `POST` | `/project/image` | Add service |
+| `PUT` | `/project/image/{imageId}` | Update service |
+| `DELETE` | `/project/image/{imageId}` | Delete service |
+| `POST` | `/project/{id}/deploy` | Deploy project |
+| `POST` | `/project/{id}/undeploy` | Undeploy project |
+| `PUT` | `/project/image/{imageId}/scale` | Scale service |
+| `POST` | `/project/image/{imageId}/reset-failures` | Reset failure cooldown |
+| `GET` | `/containers/project/{projectId}` | List containers |
+| `GET` | `/containers/project/{projectId}/metrics` | Container metrics |
+| `POST` | `/containers/{instanceId}/stop` | Stop container |
+| `DELETE` | `/containers/{instanceId}` | Remove container |
+| `GET` | `/containers/{instanceId}/logs` | Container logs |
 | `GET` | `/workers` | List workers |
-| `GET` | `/workers/{workerId}` | Get worker details |
-| `PUT` | `/workers/{workerId}/maintenance` | Toggle worker maintenance mode; admin-only |
+| `GET` | `/workers/{workerId}` | Worker detail |
+| `PUT` | `/workers/{workerId}/maintenance` | Drain/resume worker |
 | `GET` | `/audit` | Audit feed |
-| `GET` | `/audit/project/{projectId}` | Project audit feed |
-| `GET` | `/admin/users` | List users; admin-only |
-| `PUT` | `/admin/users/{userId}/role` | Change user role; admin-only |
-| `DELETE` | `/admin/users/{userId}` | Delete user; admin-only |
-| `POST` | `/admin/gateway/resync` | Re-register running containers with gateways; admin-only |
+| `GET` | `/admin/users` | Admin user list |
+| `PUT` | `/admin/users/{userId}/role` | Change user role |
+| `DELETE` | `/admin/users/{userId}` | Delete user |
+| `POST` | `/admin/gateway/resync` | Resync gateway routes |
 
-### Internal Control-Plane APIs
+### Internal Control Plane
 
-These endpoints are used by workers and gateways and require `X-Api-Key`.
+These endpoints require `X-Api-Key`.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/api/workers/register` | Register a worker |
+| `POST` | `/api/workers/register` | Worker registration |
 | `POST` | `/api/workers/heartbeat` | Worker heartbeat |
-| `POST` | `/api/workers/deregister` | Deregister a worker on shutdown |
-| `POST` | `/api/workers/container-status` | Worker container status update |
-| `POST` | `/api/workers/container-snapshot` | Worker Docker snapshot and metrics |
-| `GET` | `/api/workers/discover/{projectName}/{serviceName}` | Gateway service discovery |
-| `POST` | `/api/workers/gateway-resync` | Gateway asks the control plane to resend route registrations |
+| `POST` | `/api/workers/deregister` | Worker shutdown deregistration |
+| `POST` | `/api/workers/container-status` | Container status update |
+| `POST` | `/api/workers/container-snapshot` | Container snapshot and metrics |
+| `GET` | `/api/workers/discover/{projectName}/{serviceName}` | Gateway discovery |
+| `POST` | `/api/workers/gateway-resync` | Gateway asks for route replay |
 
-### Worker APIs
+### Worker
 
-The control plane calls worker APIs with `X-Api-Key`.
-
-| Method | Path | Description |
-| --- | --- | --- |
-| `POST` | `/api/containers/create` | Create and start a container |
-| `POST` | `/api/containers/{containerId}/stop` | Stop a container |
-| `POST` | `/api/containers/{containerId}/restart` | Restart a container |
-| `DELETE` | `/api/containers/{containerId}` | Remove a container |
-| `GET` | `/api/containers/{containerId}/logs` | Get log tail |
-
-### Gateway APIs
-
-`/gateway/health` is public. Other `/gateway/*` endpoints require the gateway
-API key.
+Worker endpoints require `X-Api-Key`.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/gateway/register` | Register a service instance route |
-| `DELETE` | `/gateway/deregister` | Deregister a service instance route |
-| `GET` | `/gateway/routes` | Snapshot of the in-memory route registry |
-| `GET` | `/gateway/health` | Gateway health |
+| `POST` | `/api/containers/create` | Create and start container |
+| `POST` | `/api/containers/{containerId}/stop` | Stop container |
+| `POST` | `/api/containers/{containerId}/restart` | Restart container |
+| `DELETE` | `/api/containers/{containerId}` | Remove container |
+| `GET` | `/api/containers/{containerId}/logs` | Get logs |
 
-## Security and Isolation
+### Gateway
 
-### User Boundary
+`/gateway/health` is public. Management endpoints require the gateway API key.
 
-- Users authenticate with JWT.
-- The backend is stateless.
-- Passwords are stored with BCrypt hashes.
-- Admin endpoints are protected by Spring Security path/method rules.
-- A normal user can manage only their own projects. Admins can inspect and
-  manage all projects.
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/gateway/register` | Register service instance |
+| `DELETE` | `/gateway/deregister` | Remove service instance |
+| `GET` | `/gateway/routes` | Inspect route registry |
+| `GET` | `/gateway/health` | Health check |
 
-### Internal Service Boundary
+## Testing
 
-- Worker-to-control-plane calls use `bicloud.api-key`.
-- Gateway-to-control-plane discovery calls use `bicloud.control-plane.api-key`.
-- Control-plane-to-gateway management calls use `bicloud.gateway.api-key`.
-- Gateway-to-gateway mesh forwarding uses the gateway API key.
-- API key comparisons use constant-time comparison.
-
-### Tenant Isolation
-
-- Each project gets a Docker network named `bicloud-{projectName}`.
-- The project network is created as an internal bridge network.
-- Containers are detached from Docker's default `bridge` network before start.
-- The gateway joins tenant networks with the `bicloud-gateway` alias.
-- Mesh routing derives the caller project from the source IP subnet.
-- A container can access only services in its own project over the mesh.
-- Cross-machine gateway hops carry a verified caller-project header and gateway
-  key.
-
-### Internet Egress
-
-Services cannot reach the internet by default. If an admin enables
-`allowInternet=true`, the worker also attaches that container to a
-project-specific egress bridge named `bicloud-egress-{projectName}`.
-
-The egress bridge is per-project. Different tenants do not share a single egress
-L2 segment.
-
-## Data Model
-
-Persistent state lives in PostgreSQL through the control plane.
-
-Main tables:
-
-| Table | Purpose |
-| --- | --- |
-| `bicloud_users` | Users, password hashes, roles |
-| `user_projects` | Tenant/project records |
-| `project_images` | Service definitions |
-| `project_image_env_vars` | Service environment variable map |
-| `container_instances` | Runtime container instance records |
-| `worker_nodes` | Worker identity and capacity |
-| `worker_states` | Worker IP, heartbeat, CPU/RAM, status |
-| `audit_events` | User and system audit events |
-
-Non-persistent runtime state:
-
-- Control-plane metric history: in-memory ring buffer, up to 90 points per
-  container.
-- Gateway route registry: in memory, refilled by resync.
-- Gateway subnet-to-project map: built from Docker network scans.
-- Frontend token/user state: browser session storage.
-
-## Frontend Features
-
-The frontend is a React SPA.
-
-User pages:
-
-- Login/register.
-- Dashboard with project, service, and running container summaries.
-- Projects page with search, create, deploy, undeploy, and delete actions.
-- Project detail page with:
-  - Services tab.
-  - Containers tab.
-  - Activity/audit tab.
-  - Add/edit/scale/delete service actions.
-  - Container log modal.
-- Service detail page with:
-  - Replica health.
-  - CPU/RAM metric cards and sparklines.
-  - Internal mesh endpoint and external gateway endpoint.
-  - Environment variable display/copy.
-  - Cooldown reset.
-  - Container stop/remove/log actions.
-- Activity page with audit timeline.
-
-Admin pages:
-
-- System overview.
-- Users: list users, change roles, delete users.
-- Workers: worker list, CPU/RAM usage, heartbeat, running container count,
-  scheduler score.
-- Worker detail page.
-- Worker maintenance toggle.
-- Gateway resync button.
-
-## Tests
-
-Control-plane tests:
+Control plane:
 
 ```powershell
 cd bicloud-control-plane
-.\mvnw.cmd test
+mvn test
 ```
 
-Worker tests:
-
-```powershell
-cd bicloud-worker
-.\mvnw.cmd test
-```
-
-Gateway tests:
+Gateway:
 
 ```powershell
 cd bicloud-gateway
-.\mvnw.cmd test
+mvn test
 ```
 
-Frontend lint/build:
+Worker:
+
+```powershell
+cd bicloud-worker
+mvn test
+```
+
+Frontend:
 
 ```powershell
 cd bicloud-front-end
-npm run lint
 npm run build
 ```
 
-Existing tests cover areas such as:
+Test coverage includes:
 
-- Worker scoring and resource reservations.
-- Self-healing behavior.
-- Container reconciliation.
-- Worker heartbeat and worker status transitions.
-- Spring context loading.
+- worker scoring,
+- resource reservations,
+- soft anti-affinity,
+- autoscaling decisions,
+- self-healing,
+- container reconciliation,
+- worker heartbeat/status transitions,
+- security rules,
+- gateway routing filters,
+- mesh routing filters.
 
-## Limitations and Notes
+## Limitations and Future Work
 
-- BiCloud is not Kubernetes. It does not implement Kubernetes APIs or use
-  Kubernetes components.
-- There is no image build/push pipeline. Users provide existing Docker image
-  names.
-- There is no automatic DNS management. Use wildcard DNS, hosts-file entries,
-  or explicit Host headers for `*.bicloud.local`.
-- Gateway route state is in memory. Automatic and manual resync mechanisms
-  refill it after restarts.
-- Container metrics are not persisted. Metric history resets after a
-  control-plane restart.
-- The current codebase has no automatic first-admin bootstrap.
-- Production usage would need TLS, proper secret management, registry auth, log
-  aggregation, stricter network policy, and operational hardening.
-- Self-healing is intentionally eventually consistent. Docker and network drift
-  are corrected by periodic loops rather than instant transactions.
-- The compose files are not full-stack deployments for every Java service.
-  Main compose files run PostgreSQL + gateway; worker compose files run the
-  gateway only.
-- The gateway must have correct Docker daemon access to join tenant networks.
+BiCloud is focused on stateless HTTP service orchestration. The current scope
+keeps the platform intentionally smaller than a general-purpose cloud platform.
+
+Important limitations:
+
+- No persistent volume support.
+- No raw TCP/L4 routing.
+- No private registry credential management yet.
+- No managed TLS/certificate automation.
+- No automatic public DNS.
+- No persistent metrics store.
+- Gateway route state is in memory, although resync exists.
+- No automatic first-admin bootstrap.
+- No Flyway/Liquibase database migration system yet.
+- No full secret manager; environment variables are currently the main config
+  primitive.
+
+Future improvements:
+
+- HTTP readiness/liveness probes for application-level health.
+- Secret masking and encrypted secret storage.
+- Private registry authentication.
+- Database migrations.
+- TLS and wildcard domain support.
+- Persistent metrics/log aggregation.
+- More advanced placement policies.
+- Blue/green or rolling deployment strategy.
 
 ## Troubleshooting
 
 ### Worker Does Not Register
 
-- Is `worker.control-plane-url` correct?
-- Can the worker machine reach `http://CONTROL_PLANE_IP:8080`?
-- Does worker `bicloud.api-key` match control-plane `bicloud.api-key`?
-- Does the worker log show a sensible `worker.ip auto-detected` value?
-- Is worker port `8081` reachable from the control plane?
+- Check `worker.control-plane-url`.
+- Check the control-plane IP address.
+- Check firewall rules.
+- Check that worker `bicloud.api-key` matches control-plane `bicloud.api-key`.
+- Check that worker port `8081` is reachable from the control plane.
+- Check worker logs for `worker.ip auto-detected`.
 
 ### Worker Becomes OFFLINE
 
 - Workers send heartbeat every 5 seconds.
-- The control plane marks a worker `OFFLINE` after 30 seconds without heartbeat.
-- Check network connectivity, worker IP detection, firewall rules, and API key
-  mismatches.
-- `MAINTENANCE` status is not overwritten automatically by heartbeat.
+- The control plane marks stale workers offline.
+- Check machine connectivity.
+- Check time synchronization.
+- Check API key mismatch.
+- Check whether the worker was put into maintenance mode.
 
 ### Gateway Returns 401
 
-- Does control-plane `bicloud.gateway.api-key` match gateway
-  `bicloud.gateway.api-key`?
-- Is `BICLOUD_GATEWAY_API_KEY` set correctly in compose?
+- Check `BICLOUD_GATEWAY_API_KEY`.
+- Check gateway `bicloud.gateway.api-key`.
+- Check control-plane `bicloud.gateway.api-key`.
 
 ### Gateway Returns 404
 
-The Host header may not match the expected format:
+The Host header may not match:
 
 ```text
 {service}.{project}.bicloud.local
 ```
 
-Example:
+Try:
 
 ```powershell
-curl -H "Host: api.demo.bicloud.local" http://localhost:9000/
+curl -H "Host: web.demo.bicloud.local" http://localhost:9000/
 ```
 
 ### Gateway Returns 503
 
-- The service may have no `RUNNING` containers.
+- The service may have no running replicas.
 - The gateway route registry may be empty.
-- Try Gateway Resync from the admin panel.
-- Check that the gateway can join the relevant Docker tenant network.
+- Try gateway resync from the admin panel.
+- Check that the gateway can access Docker and join project networks.
 
 ### Container Cannot Reach the Internet
 
-That is the default behavior. The service must have `allowInternet=true`, and
-only an admin can enable it.
+This is expected by default. Internet egress must be explicitly enabled by an
+admin for that service.
 
-### Deployment Takes a Long Time
+### Deployment Stays Pending
 
-If the Docker image is not in the worker's local cache, the worker pulls it
-first. Worker pull timeout is 10 minutes; control-plane deploy HTTP read timeout
-is 15 minutes. Large images or slow registries can leave replicas in `PENDING`
-for a while.
+Possible causes:
 
-### Docker Network Error
+- image pull is slow,
+- image name is wrong,
+- worker cannot reach Docker,
+- worker cannot reach the image registry,
+- worker cannot create/join Docker networks,
+- worker API key mismatch.
 
-The worker verifies the internal/external mode of existing Docker networks. If a
-network with the expected name already exists but has the wrong mode, the worker
-refuses to reuse it. Remove the incorrect network and let BiCloud recreate it.
+Self-healing eventually marks stale pending replicas as failed so they can be
+retried.
 
 ## Summary
 
-BiCloud consists of a Spring Boot control plane, worker agents, a dynamic
-Spring Cloud Gateway layer, and a React management UI. It implements a small but
-coherent orchestration model: desired state, worker scheduling, heartbeat,
-reconciliation, self-healing, service routing, and tenant isolation over Docker.
+BiCloud is a focused orchestration platform for stateless HTTP services. It
+combines a Spring Boot control plane, Docker worker agents, a dynamic Spring
+Cloud Gateway layer, PostgreSQL persistence, and a React management UI. It
+implements many important cloud platform concepts in a small, readable system:
+desired state, scheduling, worker heartbeat, resource-aware placement,
+self-healing, autoscaling, service discovery, dynamic routing, audit, and tenant
+network isolation.
