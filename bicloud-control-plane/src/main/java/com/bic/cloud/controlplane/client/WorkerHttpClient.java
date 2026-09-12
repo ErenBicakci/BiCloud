@@ -21,10 +21,7 @@ import java.util.Map;
 @Component
 public class WorkerHttpClient {
 
-    /** Short read timeout - stop/remove/logs must fail fast. */
     private final RestClient restClient;
-
-    /** Long read timeout - create may wait behind a cold image pull. */
     private final RestClient deployRestClient;
 
     private final WorkerStateRepository stateRepository;

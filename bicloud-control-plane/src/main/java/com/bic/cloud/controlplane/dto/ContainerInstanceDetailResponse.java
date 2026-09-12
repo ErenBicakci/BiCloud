@@ -22,13 +22,7 @@ public class ContainerInstanceDetailResponse {
     private String status;
     private Instant createdAt;
 
-    /**
-     * Address reachable through the gateway: http://{serviceName}.{projectName}.bicloud.local
-     * There is no host port binding anymore; external access goes through the gateway only.
-     */
     private String gatewayUrl;
-
-    /** Latest resource sample - null until the worker sends data. */
     private Double cpuPercent;
     private Long memoryUsedMb;
     private Long memoryLimitMb;

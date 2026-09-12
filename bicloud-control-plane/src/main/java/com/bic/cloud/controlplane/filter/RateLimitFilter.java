@@ -26,31 +26,23 @@ import java.util.Map;
 @Order(2)
 public class RateLimitFilter extends OncePerRequestFilter {
 
-    // gateway traffic - per IP
     @Value("${rate.limit.capacity:100}")
     private int gatewayCapacity;
 
     @Value("${rate.limit.refill-seconds:60}")
     private int gatewayRefillSeconds;
 
-    // user APIs - per user
     @Value("${rate.limit.api.capacity:60}")
     private int apiCapacity;
 
     @Value("${rate.limit.api.refill-seconds:60}")
     private int apiRefillSeconds;
 
-    /** Cap per map: past this the least-recently-used bucket is evicted. */
     private static final int MAX_TRACKED_KEYS = 10_000;
 
     private final Map<String, Bucket> gatewayBuckets = createLruBucketMap();
     private final Map<String, Bucket> apiBuckets     = createLruBucketMap();
 
-    /**
-     * Bounded LRU: without eviction every distinct IP/user leaves a permanent
-     * Bucket entry behind - a slow memory leak. An evicted key simply starts
-     * over with a fresh (full) bucket, which is acceptable for rate limiting.
-     */
     private static Map<String, Bucket> createLruBucketMap() {
         return Collections.synchronizedMap(new LinkedHashMap<>(256, 0.75f, true) {
             @Override

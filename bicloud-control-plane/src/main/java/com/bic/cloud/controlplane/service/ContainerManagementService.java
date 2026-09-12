@@ -39,18 +39,15 @@ public class ContainerManagementService {
     private final ProjectService projectService;
     private final WorkerStateRepository workerStateRepository;
     private final ContainerMetricsService containerMetricsService;
+    private final GatewayNotificationService gatewayNotificationService;
     private final AuditService auditService;
 
-    // sort fields allowed in search queries - unknown fields fall back to the default
     private static final Set<String> ALLOWED_SORT_FIELDS = Set.of("createdAt", "status", "workerName");
     private static final String DEFAULT_SORT_FIELD = "createdAt";
     private static final int MAX_PAGE_SIZE = 200;
     private static final int MIN_LOG_TAIL_LINES = 1;
     private static final int MAX_LOG_TAIL_LINES = 1000;
 
-    // Listing & Search
-
-    // returns all containers of a project (no paging)
     @Transactional(readOnly = true)
     public List<ContainerInstanceDetailResponse> listByProject(Long projectId, BicloudUserDetails caller) {
         UserProject project = projectService.findById(projectId);
@@ -62,7 +59,6 @@ public class ContainerManagementService {
                 .collect(Collectors.toList());
     }
 
-    // filtered + paged container search - used by the frontend container table
     @Transactional(readOnly = true)
     public PagedContainerResponse searchByProject(
             Long projectId,
@@ -78,21 +74,17 @@ public class ContainerManagementService {
         UserProject project = projectService.findById(projectId);
         projectService.assertOwnerOrAdmin(project, caller);
 
-        // convert a CSV like "RUNNING,FAILED" into an enum list
         List<ContainerInstance.InstanceStatus> statuses = parseStatuses(statusCsv);
         boolean hasStatusFilter = !statuses.isEmpty();
 
-        // treat blank strings as null
         String normalizedSearch  = (search == null      || search.isBlank())      ? null : search.trim();
         String normalizedService = (serviceName == null || serviceName.isBlank()) ? null : serviceName;
 
         Pageable pageable = buildPageable(page, size, sortBy, sortDir);
 
-        // filtered page query
         Page<ContainerInstance> resultPage = containerInstanceRepository.searchByProject(
                 projectId, normalizedService, hasStatusFilter, statuses, normalizedSearch, pageable);
 
-        // status counts - computed without filters (for the UI badges)
         Map<String, Long> statusCounts = computeStatusCounts(projectId, normalizedService, normalizedSearch);
 
         return PagedContainerResponse.builder()
@@ -105,12 +97,6 @@ public class ContainerManagementService {
                 .build();
     }
 
-    // Metrics
-
-    /**
-     * Latest samples + short history for the RUNNING containers of a project
-     * (optionally a single service). The frontend polls this every 5s for live cards.
-     */
     @Transactional(readOnly = true)
     public List<ContainerMetricsResponse> getMetricsByProject(
             Long projectId, String serviceName, BicloudUserDetails caller) {
@@ -157,24 +143,31 @@ public class ContainerManagementService {
 
     // Container operations
 
-    // sends a stop command to the worker; marks STOPPED in the DB even if the worker is unreachable
-    @Transactional
     public void stopContainer(UUID instanceId, BicloudUserDetails caller) {
         ContainerInstance instance = findInstanceOrThrow(instanceId);
         projectService.assertOwnerOrAdmin(instance.getProjectImage().getProject(), caller);
+
+        gatewayNotificationService.deregister(instance);
+
+        instance.setStatus(ContainerInstance.InstanceStatus.STOPPING);
+        containerInstanceRepository.save(instance);
+
+        if (instance.getDockerContainerId() == null || instance.getDockerContainerId().isBlank()) {
+            instance.setStatus(ContainerInstance.InstanceStatus.STOPPED);
+            containerInstanceRepository.save(instance);
+            return;
+        }
 
         try {
             log.info("Stopping container {} on worker {}",
                     instance.getDockerContainerId(), instance.getWorkerNode().getWorkerName());
             workerHttpClient.stopContainer(instance.getWorkerNode(), instance.getDockerContainerId());
             log.info("Container {} stopped successfully", instance.getDockerContainerId());
-        } catch (Exception e) {
-            log.warn("Worker could not stop container {} (may already be stopped/gone): {}",
-                    instance.getDockerContainerId(), e.getMessage());
-        } finally {
-            // update the DB even if the worker is unreachable
             instance.setStatus(ContainerInstance.InstanceStatus.STOPPED);
             containerInstanceRepository.save(instance);
+        } catch (Exception e) {
+            log.warn("Worker could not stop container {} (leaving in STOPPING for reconciler): {}",
+                    instance.getDockerContainerId(), e.getMessage());
         }
 
         auditService.userAction(caller, AuditEvent.AuditAction.CONTAINER_STOPPED,
@@ -183,23 +176,31 @@ public class ContainerManagementService {
                 "Container stopped (" + shortId(instance) + " @ " + instance.getWorkerNode().getWorkerName() + ")");
     }
 
-    // sends stop + remove to the worker; marks STOPPED in the DB even if the worker is unreachable
-    @Transactional
     public void removeContainer(UUID instanceId, BicloudUserDetails caller) {
         ContainerInstance instance = findInstanceOrThrow(instanceId);
         projectService.assertOwnerOrAdmin(instance.getProjectImage().getProject(), caller);
+
+        gatewayNotificationService.deregister(instance);
+
+        instance.setStatus(ContainerInstance.InstanceStatus.STOPPING);
+        containerInstanceRepository.save(instance);
+
+        if (instance.getDockerContainerId() == null || instance.getDockerContainerId().isBlank()) {
+            instance.setStatus(ContainerInstance.InstanceStatus.STOPPED);
+            containerInstanceRepository.save(instance);
+            return;
+        }
 
         try {
             log.info("Removing container {} on worker {}",
                     instance.getDockerContainerId(), instance.getWorkerNode().getWorkerName());
             workerHttpClient.stopAndRemoveContainer(instance.getWorkerNode(), instance.getDockerContainerId());
             log.info("Container {} removed successfully", instance.getDockerContainerId());
-        } catch (Exception e) {
-            log.warn("Worker could not stop/remove container {} (may already be gone): {}",
-                    instance.getDockerContainerId(), e.getMessage());
-        } finally {
             instance.setStatus(ContainerInstance.InstanceStatus.STOPPED);
             containerInstanceRepository.save(instance);
+        } catch (Exception e) {
+            log.warn("Worker could not stop/remove container {} (leaving in STOPPING for reconciler): {}",
+                    instance.getDockerContainerId(), e.getMessage());
         }
 
         auditService.userAction(caller, AuditEvent.AuditAction.CONTAINER_REMOVED,
@@ -213,7 +214,6 @@ public class ContainerManagementService {
         return id != null && id.length() > 12 ? id.substring(0, 12) : (id != null ? id : "-");
     }
 
-    // fetches container logs from the worker
     @Transactional(readOnly = true)
     public String getContainerLogs(UUID instanceId, int tailLines, BicloudUserDetails caller) {
         ContainerInstance instance = findInstanceOrThrow(instanceId);
@@ -225,9 +225,6 @@ public class ContainerManagementService {
                 instance.getWorkerNode(), instance.getDockerContainerId(), safeTailLines);
     }
 
-    // Helpers
-
-    // "RUNNING,FAILED" -> [RUNNING, FAILED] - unknown values are ignored
     private List<ContainerInstance.InstanceStatus> parseStatuses(String statusCsv) {
         if (statusCsv == null || statusCsv.isBlank()) return List.of();
         return Arrays.stream(statusCsv.split(","))
@@ -246,29 +243,23 @@ public class ContainerManagementService {
                 .collect(Collectors.toList());
     }
 
-    // turns page/sort params into a safe Pageable
     private Pageable buildPageable(int page, int size, String sortBy, String sortDir) {
         int safePage = Math.max(0, page);
         int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
 
-        // fall back to the default if the field is not whitelisted
         String safeSortBy = (sortBy != null && ALLOWED_SORT_FIELDS.contains(sortBy)) ? sortBy : DEFAULT_SORT_FIELD;
         Sort.Direction direction = "asc".equalsIgnoreCase(sortDir) ? Sort.Direction.ASC : Sort.Direction.DESC;
 
-        // workerName lives on the joined entity - resolved via JPQL path
         String sortPath = "workerName".equals(safeSortBy) ? "workerNode.workerName" : safeSortBy;
 
         return PageRequest.of(safePage, safeSize, Sort.by(direction, sortPath));
     }
 
-    // container count per status - unfiltered, for the UI badges
     private Map<String, Long> computeStatusCounts(Long projectId, String serviceName, String search) {
         Map<String, Long> counts = new HashMap<>();
-        // pre-fill every status with 0 so none is missing
         for (ContainerInstance.InstanceStatus s : ContainerInstance.InstanceStatus.values()) {
             counts.put(s.name(), 0L);
         }
-        // overwrite with the counts from the DB
         for (Object[] row : containerInstanceRepository.countByStatusForProject(projectId, serviceName, search)) {
             ContainerInstance.InstanceStatus status = (ContainerInstance.InstanceStatus) row[0];
             Long count = (Long) row[1];
@@ -277,7 +268,6 @@ public class ContainerManagementService {
         return counts;
     }
 
-    // find container by id or throw 404
     private ContainerInstance findInstanceOrThrow(UUID instanceId) {
         return containerInstanceRepository.findById(instanceId)
                 .orElseThrow(() -> new ContainerInstanceNotFoundException(instanceId));
@@ -287,7 +277,6 @@ public class ContainerManagementService {
         return Math.min(Math.max(tailLines, MIN_LOG_TAIL_LINES), MAX_LOG_TAIL_LINES);
     }
 
-    // maps a ContainerInstance entity to the DTO sent to the frontend
     private ContainerInstanceDetailResponse toResponse(ContainerInstance ci) {
         WorkerState state = workerStateRepository.findById(ci.getWorkerNode().getId()).orElse(null);
 
@@ -298,10 +287,8 @@ public class ContainerManagementService {
         String serviceName = ci.getProjectImage().getServiceName();
         String projectName = ci.getProjectImage().getProject().getName();
 
-        // external access address - gateway Host header format
         String gatewayUrl = "http://" + serviceName + "." + projectName + ".bicloud.local";
 
-        // latest resource sample (if any) - for the CPU/MEM columns in the container table
         ContainerMetricsService.MetricPoint latest = ci.getDockerContainerId() != null
                 ? containerMetricsService.getLatest(ci.getDockerContainerId()) : null;
 

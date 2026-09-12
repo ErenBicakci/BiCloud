@@ -8,11 +8,6 @@ import lombok.Data;
 @Data
 public class CreateProjectDto {
 
-    // The project name becomes part of the Docker network name (bicloud-{name}),
-    // hence the regex follows Docker naming rules. Reserved prefixes:
-    //   bicloud- : all platform networks share it
-    //   egress-  : a project named "egress-x" would produce the internal network
-    //              name "bicloud-egress-x", colliding with project x's egress bridge
     @NotBlank(message = "Project name must not be blank.")
     @Size(min = 2, max = 50,
           message = "Project name must be between 2 and 50 characters.")

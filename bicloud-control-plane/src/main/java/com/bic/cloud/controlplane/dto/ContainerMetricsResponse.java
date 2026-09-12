@@ -6,10 +6,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * Latest sample + short history of a container instance.
- * Backs the live cards and sparklines on the service detail page.
- */
 @Data
 @Builder
 @NoArgsConstructor
@@ -21,13 +17,11 @@ public class ContainerMetricsResponse {
     private String serviceName;
     private String workerName;
 
-    /** Latest sample; fields are null until the worker sends data. */
     private Double cpuPercent;
     private Long memoryUsedMb;
     private Long memoryLimitMb;
     private Instant updatedAt;
 
-    /** History ordered oldest to newest (~20s apart, at most 90 points). */
     private List<Point> points;
 
     @Data

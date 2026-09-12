@@ -14,6 +14,5 @@ public interface BicloudUserRepository extends JpaRepository<BicloudUser, UUID> 
 
     boolean existsByUsername(String username);
 
-    /** Used by the last-admin guard: user count for a given role. */
     long countByRole(String role);
 }

@@ -66,13 +66,11 @@ public class RouteRegistry {
                     key, ip, port, route.getInstances().size(), exposeExternally);
         }
 
-        // if this is the first instance -> connect the gateway to that project's network
         if (isFirstInstanceForProject) {
             log.info("[{}] first instance -> connecting to the Docker network for {}", key, projectName);
             networkManager.connectToNetwork(projectName);
         }
     }
-
 
     public boolean deregister(String projectName, String serviceName, String ip, int port) {
         String key = ServiceRoute.buildKey(projectName, serviceName);
@@ -108,7 +106,6 @@ public class RouteRegistry {
         return removed;
     }
 
-    //
     public Optional<ServiceInstance> resolve(String projectName, String serviceName) {
         String key = ServiceRoute.buildKey(projectName, serviceName);
         ServiceRoute route = routes.get(key);
@@ -122,15 +119,6 @@ public class RouteRegistry {
         return route != null && route.isExposeExternally();
     }
 
-    /**
-     * Reconciles the registry with local Docker reality: removes instance records
-     * for IPs NOT currently present in each project's network. Even if a push is
-     * missed, stale entries get cleaned up by the next scan - no CP restart needed.
-     *
-     * @param liveIpsByProject project name -> live container IPs on that project's network.
-     *                         A project NOT in the map (network deleted) is cleared entirely.
-     * @return number of removed instances
-     */
     public int pruneStale(Map<String, java.util.Set<String>> liveIpsByProject) {
         int removed = 0;
         for (ServiceRoute route : routes.values()) {

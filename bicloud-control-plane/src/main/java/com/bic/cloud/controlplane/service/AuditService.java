@@ -9,22 +9,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-/**
- * Records audit events.
- *
- * Design note: writes happen in the caller's current transaction. This is
- * deliberate - if the main operation rolls back, so does the audit record,
- * so an action that never happened is never logged. record(...) still never
- * leaks an exception to the caller; audit must never break the main flow.
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class AuditService {
 
     private final AuditEventRepository auditEventRepository;
-
-    // User events
 
     public void userAction(BicloudUserDetails caller, AuditAction action,
                            TargetType targetType, String targetName,
@@ -43,8 +33,6 @@ public class AuditService {
                 .build());
     }
 
-    // System events (project scoped)
-
     public void systemAction(String component, AuditAction action, Severity severity,
                             TargetType targetType, String targetName,
                             Long projectId, String ownerName, String message) {
@@ -60,8 +48,6 @@ public class AuditService {
                 .message(message)
                 .build());
     }
-
-    // System events (worker level - admin-only, ownerName null)
 
     public void workerAction(String component, AuditAction action, Severity severity,
                             String workerName, String message) {
@@ -80,8 +66,7 @@ public class AuditService {
         try {
             auditEventRepository.save(event);
         } catch (Exception e) {
-            // audit must never break the main operation - just log.
-            log.warn("Audit event kaydedilemedi (action={}): {}", event.getAction(), e.getMessage());
+            log.warn("Failed to record audit event (action={}): {}", event.getAction(), e.getMessage());
         }
     }
 }

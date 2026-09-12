@@ -43,12 +43,6 @@ public class UserAdminService {
         return toResponse(user);
     }
 
-    /**
-     * Role change. Guards:
-     *  - role can only be {ADMIN, USER} (service-level defense).
-     *  - an admin cannot change their own role (prevents self-lockout).
-     *  - the last ADMIN cannot be demoted (system must keep an admin).
-     */
     @Transactional
     public UserResponse changeRole(UUID userId, String newRole, UUID callerId) {
         if (newRole == null || !VALID_ROLES.contains(newRole)) {
@@ -75,12 +69,6 @@ public class UserAdminService {
         return toResponse(user);
     }
 
-    /**
-     * User deletion. Guards:
-     *  - an admin cannot delete their own account.
-     *  - Son ADMIN silinemez.
-     *  - a user who owns projects cannot be deleted (meaningful 409 instead of an FK violation / 500).
-     */
     @Transactional
     public void deleteUser(UUID userId, UUID callerId) {
         BicloudUser user = findOrThrow(userId);
@@ -103,7 +91,6 @@ public class UserAdminService {
         log.info("User deleted by admin: userId={}, username={}", userId, user.getUsername());
     }
 
-    /** True when the system has 1 or fewer ADMINs left. */
     private boolean isLastAdmin() {
         return userRepository.countByRole(ROLE_ADMIN) <= 1;
     }

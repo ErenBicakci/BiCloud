@@ -11,13 +11,6 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 
-/**
- * Auto-detects worker.ip when it is left blank (or is a loopback).
- * Since this is the address other machines use to reach this one, the IP of
- * the interface towards the control plane is used; if the CP is localhost,
- * 8.8.8.8 is used instead. Runs in PostConstruct; WorkerStartup registers on
- * ApplicationReady, so the resolved value makes it into the registration.
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -60,10 +53,6 @@ public class WorkerAddressResolver {
         return "127.0.0.1";
     }
 
-    /**
-     * Which local interface would be used to send a packet to the given target?
-     * UDP connect produces no real traffic; it only consults the routing table.
-     */
     private String interfaceAddressTowards(String host, int port) {
         try (DatagramSocket socket = new DatagramSocket()) {
             socket.connect(new InetSocketAddress(InetAddress.getByName(host), port));

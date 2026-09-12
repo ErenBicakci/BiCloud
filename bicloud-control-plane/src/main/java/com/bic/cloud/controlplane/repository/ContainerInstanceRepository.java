@@ -30,17 +30,16 @@ public interface ContainerInstanceRepository extends JpaRepository<ContainerInst
     @EntityGraph(attributePaths = {"workerNode", "projectImage", "projectImage.project"})
     List<ContainerInstance> findByProjectImage(ProjectImage image);
 
-    /**
-     * Eagerly loads worker + image + project: callers iterate these instances
-     * outside a transaction (gateway deregister, worker stop calls), so lazy
-     * access would fail there.
-     */
     @EntityGraph(attributePaths = {"workerNode", "projectImage", "projectImage.project"})
     List<ContainerInstance> findByProjectImageAndStatus(ProjectImage image, ContainerInstance.InstanceStatus status);
 
+    @EntityGraph(attributePaths = {"workerNode", "projectImage", "projectImage.project"})
+    List<ContainerInstance> findByProjectImageAndStatusIn(ProjectImage image, java.util.Collection<ContainerInstance.InstanceStatus> statuses);
+
     long countByProjectImageAndStatus(ProjectImage image, ContainerInstance.InstanceStatus status);
 
-    /** Crash-loop detection: count of instances created after the given moment that ended FAILED. */
+    long countByProjectImageAndStatusIn(ProjectImage image, java.util.Collection<ContainerInstance.InstanceStatus> statuses);
+
     long countByProjectImageAndStatusAndCreatedAtAfter(
             ProjectImage image, ContainerInstance.InstanceStatus status, java.time.Instant after);
 
@@ -78,13 +77,27 @@ public interface ContainerInstanceRepository extends JpaRepository<ContainerInst
 
     @Query("""
         SELECT ci FROM ContainerInstance ci
+        JOIN FETCH ci.workerNode
+        JOIN FETCH ci.projectImage pi
+        JOIN FETCH pi.project p
+        WHERE p.id = :projectId
+          AND ci.status IN ('RUNNING', 'PENDING', 'STOPPING')
+    """)
+    List<ContainerInstance> findActiveByProjectId(@Param("projectId") Long projectId);
+
+    @EntityGraph(attributePaths = {"workerNode", "projectImage", "projectImage.project", "projectImage.project.owner"})
+    @Query("""
+        SELECT ci FROM ContainerInstance ci
         WHERE ci.workerNode.id = :workerNodeId
           AND ci.status = 'RUNNING'
     """)
     List<ContainerInstance> findRunningByWorkerNodeId(@Param("workerNodeId") UUID workerNodeId);
 
-    @EntityGraph(attributePaths = {"workerNode", "projectImage", "projectImage.project"})
+    @EntityGraph(attributePaths = {"workerNode", "projectImage", "projectImage.project", "projectImage.project.owner"})
     List<ContainerInstance> findByWorkerNode_IdAndStatus(UUID workerNodeId, ContainerInstance.InstanceStatus status);
+
+    @EntityGraph(attributePaths = {"workerNode", "projectImage", "projectImage.project", "projectImage.project.owner"})
+    List<ContainerInstance> findByWorkerNode_IdAndStatusIn(UUID workerNodeId, java.util.Collection<ContainerInstance.InstanceStatus> statuses);
 
 
     @Query("""
@@ -117,29 +130,19 @@ public interface ContainerInstanceRepository extends JpaRepository<ContainerInst
             Pageable pageable);
 
 
-    /**
-     * Reserved resources per worker: summed memory and CPU limits of the
-     * RUNNING/PENDING containers assigned to it.
-     * The scheduler scores on this reservation instead of live OS usage -
-     * so in back-to-back deploys each assignment immediately affects the next pick.
-     * Row format: [workerNodeId(UUID), sumMemoryMb(Long), sumCpuCores(Double)]
-     */
+    // Row: [workerNodeId(UUID), sumMemoryMb(Long), sumCpuCores(Double)]
     @Query("""
         SELECT ci.workerNode.id,
                COALESCE(SUM(pi.memoryLimitMb), 0),
                COALESCE(SUM(pi.cpuLimit), 0)
         FROM ContainerInstance ci
         JOIN ci.projectImage pi
-        WHERE ci.status IN ('RUNNING', 'PENDING')
+        WHERE ci.status IN ('RUNNING', 'PENDING', 'STOPPING')
         GROUP BY ci.workerNode.id
     """)
     List<Object[]> sumReservedResourcesByWorker();
 
-    /**
-     * Anti-affinity input: how many live (RUNNING/PENDING) replicas of the
-     * given service each worker already hosts.
-     * Row format: [workerNodeId(UUID), replicaCount(Long)]
-     */
+    // Row: [workerNodeId(UUID), replicaCount(Long)]
     @Query("""
         SELECT ci.workerNode.id, COUNT(ci)
         FROM ContainerInstance ci

@@ -12,9 +12,6 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * Worker listing endpoints for the frontend (JWT).
- */
 @RestController
 @RequestMapping("/workers")
 @RequiredArgsConstructor
@@ -33,12 +30,6 @@ public class WorkerViewController {
         return ResponseEntity.ok(workerService.getWorkerDetail(workerId));
     }
 
-    /**
-     * Maintenance mode (drain): puts the worker in MAINTENANCE - the scheduler
-     * assigns it no new containers, existing ones keep running.
-     * enabled=false lifts maintenance (ACTIVE/OVERLOADED is recomputed on the
-     * first heartbeat).
-     */
     @PutMapping("/{workerId}/maintenance")
     public ResponseEntity<WorkerNodeDetailResponse> setMaintenance(
             @PathVariable UUID workerId,

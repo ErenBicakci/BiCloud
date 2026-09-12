@@ -15,11 +15,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * Reads one-shot (no-stream) resource usage from the Docker stats API.
- * With stream=false the daemon takes two samples and fills the precpu fields,
- * so the CPU percentage can use the exact same formula as `docker stats`.
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -29,10 +24,6 @@ public class ContainerStatsCollector {
 
     private final DockerClient dockerClient;
 
-    /**
-     * Reads live stats for one container. Returns null when the container
-     * stopped/was removed in the meantime, or on timeout.
-     */
     public ContainerStatsDto collect(String containerId) {
         try (FirstResultCallback callback = new FirstResultCallback()) {
 
@@ -55,10 +46,7 @@ public class ContainerStatsCollector {
         }
     }
 
-    /**
-     * Same formula as the docker stats CLI:
-     * cpu% = (cpuDelta / systemDelta) * onlineCpus * 100
-     */
+    // cpu% = (cpuDelta / systemDelta) * onlineCpus * 100
     private double calculateCpuPercent(Statistics stats) {
         CpuStatsConfig cpu = stats.getCpuStats();
         CpuStatsConfig preCpu = stats.getPreCpuStats();
@@ -83,9 +71,6 @@ public class ContainerStatsCollector {
         return Math.round(percent * 10.0) / 10.0;
     }
 
-    /**
-     * Real usage with cache/inactive_file subtracted, like the docker stats CLI.
-     */
     private long calculateMemoryUsedMb(Statistics stats) {
         MemoryStatsConfig mem = stats.getMemoryStats();
         if (mem == null || mem.getUsage() == null) return 0;
@@ -101,11 +86,6 @@ public class ContainerStatsCollector {
         return bytes == null ? 0 : bytes / (1024 * 1024);
     }
 
-    /**
-     * Callback that captures the first Statistics item and allows a bounded wait.
-     * (InvocationBuilder.AsyncResultCallback.awaitResult timeout desteklemiyor;
-     * used to block forever when the stream closed without emitting an item.)
-     */
     private static class FirstResultCallback extends ResultCallback.Adapter<Statistics> {
 
         private final AtomicReference<Statistics> first = new AtomicReference<>();

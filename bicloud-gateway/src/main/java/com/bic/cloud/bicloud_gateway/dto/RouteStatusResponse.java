@@ -10,10 +10,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
-/**
- * GET /gateway/routes response: summary of active routes and instances
- * (for monitoring/debug).
- */
 @Data
 @Builder
 @NoArgsConstructor

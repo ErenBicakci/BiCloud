@@ -28,41 +28,18 @@ public class SelfHealingScheduler {
 
     private static final String COMPONENT = "self-healing";
 
-    //give workers some time to register after startup
     private static final long STARTUP_COOLDOWN_SECONDS = 60;
     private final Instant startupTime = Instant.now();
 
-    /**
-     * Max consecutive failures before self-healing stops retrying a service and puts it in cooldown.
-     */
     private static final int MAX_CONSECUTIVE_FAILURES = 5;
-
-    /**
-     * A service that hits MAX_CONSECUTIVE_FAILURES is left alone for this long.
-     * It stays passive until the operator deploys manually or the window expires.
-     */
     private static final Duration FAILURE_COOLDOWN = Duration.ofMinutes(5);
 
-    /**
-     * Crash-loop detection: when a deploy SUCCEEDS but the container dies later,
-     * the deploy-failure counter never increments (a successful start resets it).
-     * So we additionally count FAILED instances within CRASH_LOOP_WINDOW; past the
-     * threshold the service enters the same cooldown mechanism (a simplified
-     * version of Kubernetes' CrashLoopBackOff).
-     */
     private static final int CRASH_LOOP_THRESHOLD = 5;
     private static final Duration CRASH_LOOP_WINDOW = Duration.ofMinutes(5);
 
-    /**
-     * A PENDING instance older than this is an orphan (its deploy thread is
-     * gone - the worker's pull timeout is 10 min, the CP's HTTP read timeout
-     * 15 min, so nothing legitimate is still in flight past 20).
-     */
     private static final Duration PENDING_TIMEOUT = Duration.ofMinutes(20);
 
-    // NOT @Transactional: deploy/scale below reach workers over HTTP (an image
-    // pull can take minutes) and a transaction would pin a DB connection for the
-    // whole loop. findAllWithProject fetch-joins everything the loop touches.
+    // Intentionally non-transactional to avoid holding DB connections during HTTP worker calls
     @Scheduled(fixedDelay = 30000)
     public void reconcile() {
 
@@ -81,13 +58,19 @@ public class SelfHealingScheduler {
 
             int desired = image.getDesiredReplicas();
 
-            // desired=0 (scaled to zero) or an explicit undeploy both mean the
-            // user stopped the service on purpose, don't touch it
             if (desired <= 0 || image.isStoppedByUser()) {
+                long activeCount = containerInstanceRepository.countByProjectImageAndStatusIn(
+                        image, List.of(ContainerInstance.InstanceStatus.RUNNING,
+                                       ContainerInstance.InstanceStatus.PENDING,
+                                       ContainerInstance.InstanceStatus.STOPPING));
+                if (activeCount > 0) {
+                    log.info("[Self-Healing] Service '{}' in project '{}' is stopped/scaled to 0, but has {} active instance(s). Reconciling to 0.",
+                            image.getServiceName(), image.getProject().getName(), activeCount);
+                    deploymentService.scaleAsync(image.getId(), 0);
+                }
                 continue;
             }
 
-            // PENDING counts as alive: those replicas are being created right now
             long runningCount = containerInstanceRepository
                     .countByProjectImageAndStatus(image, ContainerInstance.InstanceStatus.RUNNING)
                     + containerInstanceRepository
@@ -116,9 +99,6 @@ public class SelfHealingScheduler {
                         desired - runningCount);
 
                 try {
-                    // async: a long image pull must not stall this loop for the
-                    // other tenants; PENDING counting keeps the next cycles from
-                    // re-firing while the deploy is in flight
                     deploymentService.deployAsync(image.getId());
                     auditService.systemAction(COMPONENT, AuditEvent.AuditAction.SELF_HEALING_DEPLOY,
                             AuditEvent.Severity.WARN, AuditEvent.TargetType.SERVICE,
@@ -134,9 +114,6 @@ public class SelfHealingScheduler {
 
             } else if (runningCount > desired) {
 
-                // Excess replicas: after a false-FAILED recovery (reconcile) both the
-                // recovered container and its replacement may be running at the same
-                // time. Scale back down to the desired count.
                 log.info("[Self-Healing] Service '{}' in project '{}': running={}, desired={} -> scaling down {} excess replica(s)",
                         image.getServiceName(),
                         image.getProject().getName(),
@@ -161,16 +138,6 @@ public class SelfHealingScheduler {
         }
     }
 
-    /**
-     * PENDING is a promise that a deploy thread is working on the replica. Two
-     * cases break that promise and would freeze the desired count forever,
-     * because PENDING counts as alive:
-     *   - rows created before this CP process started (the thread died with
-     *     the previous JVM)
-     *   - rows older than PENDING_TIMEOUT (every legitimate path has long
-     *     timed out)
-     * Both go to FAILED so healing can replace them.
-     */
     private void failStalePendingInstances() {
 
         List<ContainerInstance> pendings = containerInstanceRepository
@@ -200,12 +167,6 @@ public class SelfHealingScheduler {
         }
     }
 
-    /**
-     * Catches a service that produced more FAILED instances than the threshold
-     * within CRASH_LOOP_WINDOW and disables it by filling the existing cooldown
-     * fields. The cooldown badge in the UI, the "Reset Cooldown" button and the
-     * isInFailureCooldown window all keep working without any extra mechanism.
-     */
     private boolean detectCrashLoop(ProjectImage image) {
 
         long recentFailures = containerInstanceRepository
@@ -226,7 +187,6 @@ public class SelfHealingScheduler {
                 recentFailures,
                 CRASH_LOOP_WINDOW.toMinutes());
 
-        // trigger the existing backoff mechanism: badge + 5 min hands-off + manual reset
         image.setConsecutiveDeployFailures(
                 Math.max(image.getConsecutiveDeployFailures(), MAX_CONSECUTIVE_FAILURES));
         image.setLastDeployFailureAt(Instant.now());
@@ -241,7 +201,6 @@ public class SelfHealingScheduler {
         return true;
     }
 
-    /** Owner is fetch-joined by findAllWithProject; the guard stays just in case. */
     private String ownerOf(ProjectImage image) {
         try {
             return image.getProject().getOwner() != null
@@ -251,14 +210,6 @@ public class SelfHealingScheduler {
         }
     }
 
-    /**
-     * Cooldown is active when the service reached MAX_CONSECUTIVE_FAILURES and
-     * the last failure is more recent than FAILURE_COOLDOWN.
-     *
-     * Once the window expires, or the operator deploys manually
-     * (DeploymentService.updateBackoffCounters resets the counter on the first
-     * successful replica), the service rejoins self-healing.
-     */
     private boolean isInFailureCooldown(com.bic.cloud.controlplane.model.ProjectImage image) {
 
         if (image.getConsecutiveDeployFailures() < MAX_CONSECUTIVE_FAILURES) {

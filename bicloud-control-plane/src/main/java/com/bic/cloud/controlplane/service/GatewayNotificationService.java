@@ -18,12 +18,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
-/**
- * Sends container register/deregister and resync notifications to gateways.
- * Each machine runs its own gateway, so a container is registered with the
- * gateway of the worker it lives on (http://workerIp:port); if the worker IP
- * is unknown, the bicloud.gateway.url fallback is used.
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -31,15 +25,12 @@ public class GatewayNotificationService {
 
     private static final String API_KEY_HEADER = "X-Api-Key";
 
-    // used when the worker IP is unknown (single machine / dev environment)
     @Value("${bicloud.gateway.url:http://localhost:9000}")
     private String fallbackGatewayUrl;
 
-    // the same port is assumed on every machine
     @Value("${bicloud.gateway.port:9000}")
     private int gatewayPort;
 
-    // deliberately no default, missing config should fail at startup
     @Value("${bicloud.gateway.api-key}")
     private String gatewayApiKey;
 
@@ -47,16 +38,12 @@ public class GatewayNotificationService {
     private final ContainerInstanceRepository containerInstanceRepository;
     private final WorkerStateRepository workerStateRepository;
 
-
     @PostConstruct
     public void resyncOnStartup() {
         log.info("Gateway startup resync starting...");
         resyncAll();
     }
 
-    /**
-     * Registers a newly started container with the gateway of its worker.
-     */
     public void register(ContainerInstance instance) {
         String containerIp = instance.getContainerIp();
         if (containerIp == null || containerIp.isBlank()) {
@@ -95,9 +82,6 @@ public class GatewayNotificationService {
         }
     }
 
-    /**
-     * Removes a stopped/deleted container from the gateway of its worker.
-     */
     public void deregister(ContainerInstance instance) {
         String containerIp = instance.getContainerIp();
         if (containerIp == null || containerIp.isBlank()) {
@@ -133,11 +117,6 @@ public class GatewayNotificationService {
         }
     }
 
-    /**
-     * Re-registers every RUNNING container in the DB with the gateways.
-     * Used after a gateway restart (in-memory routes lost), at CP startup and
-     * by the manual sync button in the admin panel.
-     */
     public int resyncAll() {
         List<ContainerInstance> running = containerInstanceRepository
                 .findAllByStatus(ContainerInstance.InstanceStatus.RUNNING);
@@ -155,7 +134,6 @@ public class GatewayNotificationService {
         return registered;
     }
 
-    // worker IP comes from WorkerState, otherwise fallback URL
     private String resolveGatewayUrl(ContainerInstance instance) {
         try {
             UUID workerId = instance.getWorkerNode().getId();

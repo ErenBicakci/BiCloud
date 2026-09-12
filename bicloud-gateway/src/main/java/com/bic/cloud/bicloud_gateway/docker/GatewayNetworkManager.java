@@ -26,29 +26,13 @@ import java.util.stream.Collectors;
 @Slf4j
 public class GatewayNetworkManager {
 
-    /// Docker network naming convention: "bicloud-{projectName}"
     private static final String NETWORK_PREFIX = "bicloud-";
-
-    /**
-     * The gateway's DNS alias on every tenant network. Containers reach the mesh
-     * proxy at the same address on every machine: http://bicloud-gateway:9000/_bicloud/mesh/...
-     */
     private static final String GATEWAY_NETWORK_ALIAS = "bicloud-gateway";
 
-    /**
-     * Infrastructure networks excluded from the scan.
-     * These are not tenant isolation networks but inter-service networks.
-     */
     private static final Set<String> EXCLUDED_NETWORKS = Set.of(
             "bicloud-infra"
     );
 
-    /**
-     * Per-project egress bridges (bicloud-egress-*) are internet-uplink networks,
-     * not tenant service networks. The gateway must not join them or fold their
-     * subnets into the mesh source-IP map - doing so would corrupt tenant
-     * isolation. They are excluded from the scan by this prefix.
-     */
     private static final String EGRESS_PREFIX = "bicloud-egress-";
 
     @Value("${bicloud.gateway.container-name:}")
@@ -57,14 +41,7 @@ public class GatewayNetworkManager {
     @Value("${bicloud.gateway.docker-host:unix:///var/run/docker.sock}")
     private String dockerHost;
 
-    /** Names of currently connected networks. Prevents reconnecting, aids monitoring. */
     private final Set<String> connectedNetworks = ConcurrentHashMap.newKeySet();
-
-    /**
-     * Subnet -> project map for tenant isolation (CIDR string -> project name).
-     * Whichever subnet the source IP of a mesh request falls into determines its
-     * project; MeshRoutingFilter compares that against the project in the path.
-     */
     private volatile Map<String, String> subnetToProject = Map.of();
 
     private DockerClient dockerClient;
@@ -91,7 +68,6 @@ public class GatewayNetworkManager {
         log.info("GatewayNetworkManager started | container={} | dockerHost={}",
                 gatewayContainerId, dockerHost);
 
-        // scan and connect to all existing bicloud-* networks at startup
         scanAndConnectAll();
     }
 
@@ -116,12 +92,10 @@ public class GatewayNetworkManager {
 
             log.debug("Detected {} bicloud-* network(s).", bicloudNetworks.size());
 
-            // connect to every network found
             for (Network network : bicloudNetworks) {
                 connectToNetworkById(network.getName(), network.getId());
             }
 
-            // drop networks that no longer exist in Docker
             Set<String> existingNames = bicloudNetworks.stream()
                     .map(Network::getName)
                     .collect(Collectors.toSet());
@@ -182,7 +156,7 @@ public class GatewayNetworkManager {
 
     private void connectToNetworkById(String networkName, String networkId) {
         if (connectedNetworks.contains(networkName)) {
-            return; // already connected
+            return;
         }
 
         try {
@@ -200,8 +174,6 @@ public class GatewayNetworkManager {
             connectedNetworks.add(networkName);
             log.debug("Gateway was already connected to network {} (409 conflict)", networkName);
         } catch (NotFoundException e) {
-            // the gateway is not running as a Docker container (dev environment).
-            // docker network connect can't work - expected, pass silently.
             log.warn("Gateway container not found ('{}') - it may be running as a plain Java " +
                      "process in dev mode. Run the gateway as a Docker container for full routing.",
                      gatewayContainerId);
@@ -217,7 +189,6 @@ public class GatewayNetworkManager {
         }
     }
 
-    //determines the gateway's own container name/ID.
     private String resolveGatewayContainerId() {
         if (configuredContainerName != null && !configuredContainerName.isBlank()) {
             log.info("Gateway container name (config): {}", configuredContainerName);
@@ -235,10 +206,6 @@ public class GatewayNetworkManager {
         return "bicloud-gateway";
     }
 
-    /**
-     * Returns which tenant project the given IPv4 address belongs to.
-     * Empty if the IP falls into no bicloud-* subnet (not a container -> no tenant).
-     */
     public java.util.Optional<String> projectForIp(String ip) {
         long addr = ipv4ToLong(ip);
         if (addr < 0) return java.util.Optional.empty();
@@ -251,11 +218,6 @@ public class GatewayNetworkManager {
         return java.util.Optional.empty();
     }
 
-    /**
-     * For each tenant project, returns the container IPs that currently really
-     * exist on that project's Docker network (excluding the gateway itself).
-     * RouteRegistry is compared against this "local truth" to purge stale entries.
-     */
     public Map<String, Set<String>> liveIpsByProject() {
         Map<String, Set<String>> result = new java.util.HashMap<>();
         try {
@@ -268,11 +230,10 @@ public class GatewayNetworkManager {
             for (Network n : networks) {
                 String project = n.getName().substring(NETWORK_PREFIX.length());
                 Set<String> ips = ConcurrentHashMap.newKeySet();
-                // listNetworks doesn't return container details - each needs an inspect
                 Network detail = dockerClient.inspectNetworkCmd().withNetworkId(n.getId()).exec();
                 if (detail.getContainers() != null) {
                     detail.getContainers().forEach((id, container) -> {
-                        String addr = container.getIpv4Address(); // "172.23.0.6/16"
+                        String addr = container.getIpv4Address();
                         if (addr != null && !addr.isBlank()) {
                             int slash = addr.indexOf('/');
                             ips.add(slash > 0 ? addr.substring(0, slash) : addr);
@@ -283,19 +244,18 @@ public class GatewayNetworkManager {
             }
         } catch (Exception e) {
             log.error("liveIpsByProject failed: {}", e.getMessage());
-            return Map.of(); // return empty - the caller does NOT prune (avoid accidental deletion)
+            return Map.of();
         }
         return result;
     }
 
-    /** Rebuilds the subnet(CIDR) -> project name map from the network list. */
     private void rebuildSubnetMap(List<Network> bicloudNetworks) {
         Map<String, String> fresh = new java.util.HashMap<>();
         for (Network n : bicloudNetworks) {
             String project = n.getName().substring(NETWORK_PREFIX.length());
             if (n.getIpam() == null || n.getIpam().getConfig() == null) continue;
             for (Network.Ipam.Config cfg : n.getIpam().getConfig()) {
-                if (cfg.getSubnet() != null && cfg.getSubnet().contains(".")) { // IPv4 only
+                if (cfg.getSubnet() != null && cfg.getSubnet().contains(".")) {
                     fresh.put(cfg.getSubnet(), project);
                 }
             }
@@ -330,9 +290,6 @@ public class GatewayNetworkManager {
         }
     }
 
-    /**
-     * Finds the ID of the Docker network that exactly matches the given name.
-     */
     private String findNetworkId(String networkName) {
         return dockerClient.listNetworksCmd()
                 .withNameFilter(networkName)

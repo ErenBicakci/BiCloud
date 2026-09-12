@@ -5,14 +5,6 @@ import lombok.*;
 
 import java.time.Instant;
 
-/**
- * Persistent audit trail of user and system (self-healing/reconciler/health)
- * events. Unlike metrics this data must survive restarts - hence it lives
- * in the DB.
- *
- * ownerName is denormalized so a regular user can only see events of their
- * own projects (null for worker-level events -> admin-only).
- */
 @Entity
 @Table(name = "audit_events", indexes = {
         @Index(name = "idx_audit_owner",   columnList = "ownerName"),
@@ -37,7 +29,6 @@ public class AuditEvent {
     @Column(nullable = false, length = 16)
     private ActorType actorType;
 
-    /** Username for USER events; component name for SYSTEM events (e.g. "self-healing"). */
     @Column(nullable = false, length = 100)
     private String actorName;
 
@@ -49,14 +40,11 @@ public class AuditEvent {
     @Column(length = 16)
     private TargetType targetType;
 
-    /** Human-readable target name: service, project or worker name, etc. */
     @Column(length = 200)
     private String targetName;
 
-    /** For scoping/filtering; null for worker-level events. */
     private Long projectId;
 
-    /** Denormalized project owner - for per-user permission queries. Null -> admin-only. */
     @Column(length = 100)
     private String ownerName;
 

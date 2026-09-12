@@ -1,5 +1,6 @@
 package com.bic.cloud.controlplane.service;
 
+import com.bic.cloud.controlplane.client.WorkerHttpClient;
 import com.bic.cloud.controlplane.exception.WorkerNotFoundException;
 import com.bic.cloud.controlplane.model.AuditEvent;
 import com.bic.cloud.controlplane.model.ContainerInstance;
@@ -17,42 +18,21 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-/**
- * Compares container snapshots coming from workers against the DB.
- *
- * Scenario: a container looks RUNNING in the DB but is gone from Docker
- * (removed manually by an operator, killed unexpectedly by the daemon, etc.).
- * These zombie records fool self-healing (it thinks replicas are fine) and
- * the user sees a dead service as healthy.
- *
- * Every 20 seconds the worker sends the IDs of all running containers with
- * the {@code bicloud.managed=true} label. Here:
- *   1. fetch the worker's RUNNING containers from the DB
- *   2. anything missing from the snapshot -> mark FAILED
- *   3. self-healing spawns a replacement on its next cycle
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ContainerReconciliationService {
 
-    /**
-     * A snapshot goes stale between the moment the worker lists containers and
-     * the moment it reaches the CP (network latency + stats collection time).
-     * Containers created inside that window can't be on the list; treating them
-     * as zombies causes an endless restart loop with self-healing. So fresh
-     * records are left alone.
-     */
     private static final long NEW_INSTANCE_GRACE_SECONDS = 60;
 
     private final WorkerNodeRepository workerNodeRepository;
     private final ContainerInstanceRepository containerInstanceRepository;
     private final GatewayNotificationService gatewayNotificationService;
+    private final WorkerHttpClient workerHttpClient;
     private final AuditService auditService;
 
     private static final String COMPONENT = "reconciler";
 
-    @Transactional
     public void reconcile(UUID workerId, List<String> actualRunningContainerIds) {
 
         WorkerNode worker = workerNodeRepository.findById(workerId)
@@ -63,6 +43,8 @@ public class ContainerReconciliationService {
                 : new HashSet<>(actualRunningContainerIds);
 
         recoverFalseFailed(worker, actualSet);
+        reconcileStopping(worker, actualSet);
+        cleanFalseStopped(worker, actualSet);
 
         List<ContainerInstance> dbRunning = containerInstanceRepository
                 .findRunningByWorkerNodeId(workerId);
@@ -77,10 +59,6 @@ public class ContainerReconciliationService {
                 continue;
             }
 
-            // grace period: might have started after the snapshot, leave it to
-            // the next round. startedAt marks the actual RUNNING transition;
-            // createdAt is the PENDING reservation, which can be minutes older
-            // (image pull) and would defeat the grace check here.
             Instant startedAt = ci.getStartedAt() != null ? ci.getStartedAt() : ci.getCreatedAt();
             if (startedAt != null && startedAt.isAfter(graceCutoff)) {
                 continue;
@@ -109,16 +87,6 @@ public class ContainerReconciliationService {
         logResult(worker, zombiesFound, dbRunning.size());
     }
 
-    /**
-     * Recovery in the opposite direction: records that look FAILED in the DB
-     * but are still running in Docker according to the snapshot go back to RUNNING.
-     *
-     * This typically happens when a worker is briefly considered OFFLINE
-     * (clock skew, short network blip): WorkerHealthScheduler marks its
-     * containers FAILED, the worker comes back, and the containers never
-     * actually died. Without recovery, self-healing spawns duplicates and the
-     * real containers pile up orphaned.
-     */
     private void recoverFalseFailed(WorkerNode worker, Set<String> actualSet) {
 
         List<ContainerInstance> failed = containerInstanceRepository
@@ -136,8 +104,6 @@ public class ContainerReconciliationService {
             containerInstanceRepository.save(ci);
             recovered++;
 
-            // the gateway entry wasn't removed when it got marked FAILED, but make sure -
-            // register is idempotent (resyncAll re-registers the same way).
             gatewayNotificationService.register(ci);
 
             log.info("[Reconcile] Recovered false-FAILED container on worker '{}': instanceId={}, dockerId={}, service={} -> RUNNING",
@@ -160,7 +126,50 @@ public class ContainerReconciliationService {
         }
     }
 
-    /** Lazy owner access - safe inside the @Transactional reconcile. */
+    private void reconcileStopping(WorkerNode worker, Set<String> actualSet) {
+        List<ContainerInstance> stoppingInstances = containerInstanceRepository
+                .findByWorkerNode_IdAndStatus(worker.getId(), ContainerInstance.InstanceStatus.STOPPING);
+
+        for (ContainerInstance ci : stoppingInstances) {
+            String dockerId = ci.getDockerContainerId();
+            if (dockerId == null || dockerId.isBlank() || !actualSet.contains(dockerId)) {
+                ci.setStatus(ContainerInstance.InstanceStatus.STOPPED);
+                containerInstanceRepository.save(ci);
+                log.info("[Reconcile] Container in STOPPING state confirmed stopped on worker '{}': instanceId={}, dockerId={} -> STOPPED",
+                        worker.getWorkerName(), ci.getId(), dockerId);
+            } else {
+                log.warn("[Reconcile] Container in STOPPING state still running in Docker on worker '{}': instanceId={}, dockerId={}. Retrying stop/remove.",
+                        worker.getWorkerName(), ci.getId(), dockerId);
+                try {
+                    workerHttpClient.stopAndRemoveContainer(worker, dockerId);
+                } catch (Exception e) {
+                    log.warn("[Reconcile] Failed to retry stopAndRemove for container {} on worker {}: {}",
+                            dockerId, worker.getWorkerName(), e.getMessage());
+                }
+            }
+        }
+    }
+
+    private void cleanFalseStopped(WorkerNode worker, Set<String> actualSet) {
+        List<ContainerInstance> stoppedInstances = containerInstanceRepository
+                .findByWorkerNode_IdAndStatus(worker.getId(), ContainerInstance.InstanceStatus.STOPPED);
+
+        for (ContainerInstance ci : stoppedInstances) {
+            String dockerId = ci.getDockerContainerId();
+            if (dockerId != null && !dockerId.isBlank() && actualSet.contains(dockerId)) {
+                log.warn("[Reconcile] Zombie container found running on worker '{}' but marked STOPPED in DB: instanceId={}, dockerId={}. Stopping in Docker.",
+                        worker.getWorkerName(), ci.getId(), dockerId);
+                gatewayNotificationService.deregister(ci);
+                try {
+                    workerHttpClient.stopAndRemoveContainer(worker, dockerId);
+                } catch (Exception e) {
+                    log.warn("[Reconcile] Failed to stop zombie STOPPED container {} on worker {}: {}",
+                            dockerId, worker.getWorkerName(), e.getMessage());
+                }
+            }
+        }
+    }
+
     private String ownerOf(ContainerInstance ci) {
         try {
             return ci.getProjectImage().getProject().getOwner() != null

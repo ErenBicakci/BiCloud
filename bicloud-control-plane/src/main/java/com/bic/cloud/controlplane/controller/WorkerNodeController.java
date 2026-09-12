@@ -92,10 +92,6 @@ public class WorkerNodeController {
         return ResponseEntity.ok(serviceDiscoveryService.getEndpoints(projectName, serviceName));
     }
 
-    /**
-     * After a restart (in-memory routes lost) gateways use this endpoint to
-     * ask the CP to resend registrations - no CP restart needed.
-     */
     @PostMapping("/gateway-resync")
     public ResponseEntity<java.util.Map<String, Object>> gatewayResync() {
         int count = gatewayNotificationService.resyncAll();

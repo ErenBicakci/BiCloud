@@ -43,33 +43,23 @@ class SelfHealingSchedulerTest {
 
     @BeforeEach
     void bypassStartupCooldown() throws Exception {
-        // move startupTime 120s back so the startup cooldown is over
         Field field = SelfHealingScheduler.class.getDeclaredField("startupTime");
         field.setAccessible(true);
         field.set(scheduler, Instant.now().minusSeconds(120));
     }
 
-    // ──────────────────────────────────────────────────────────────
-    // Startup cooldown
-    // ──────────────────────────────────────────────────────────────
-
     @Test
     @DisplayName("reconcile -> does nothing while the startup cooldown is active")
     void reconcile_skipsWhenInStartupCooldown() throws Exception {
-        // set startupTime to now so the cooldown is active
         Field field = SelfHealingScheduler.class.getDeclaredField("startupTime");
         field.setAccessible(true);
-        field.set(scheduler, Instant.now()); // just started
+        field.set(scheduler, Instant.now());
 
         scheduler.reconcile();
 
         verifyNoInteractions(projectImageRepository);
         verifyNoInteractions(deploymentService);
     }
-
-    // ──────────────────────────────────────────────────────────────
-    // Reconcile logic
-    // ──────────────────────────────────────────────────────────────
 
     @Test
     @DisplayName("reconcile -> queues an async deploy when running count is below desired")
@@ -127,6 +117,35 @@ class SelfHealingSchedulerTest {
     }
 
     @Test
+    @DisplayName("reconcile -> service stoppedByUser with active containers triggers scaleAsync to 0")
+    void reconcile_serviceStoppedByUserWithActiveContainers_triggersScaleToZero() {
+        ProjectImage image = buildImage(1L, "stopped-svc", 0);
+        image.setStoppedByUser(true);
+
+        when(projectImageRepository.findAllWithProject()).thenReturn(List.of(image));
+        when(containerInstanceRepository.countByProjectImageAndStatusIn(eq(image), anyList())).thenReturn(2L);
+
+        scheduler.reconcile();
+
+        verify(deploymentService).scaleAsync(1L, 0);
+        verify(deploymentService, never()).deployAsync(anyLong());
+    }
+
+    @Test
+    @DisplayName("reconcile -> service with desired=0 but active containers triggers scaleAsync to 0")
+    void reconcile_desiredZeroWithActiveContainers_triggersScaleToZero() {
+        ProjectImage image = buildImage(1L, "zero-svc", 0);
+
+        when(projectImageRepository.findAllWithProject()).thenReturn(List.of(image));
+        when(containerInstanceRepository.countByProjectImageAndStatusIn(eq(image), anyList())).thenReturn(1L);
+
+        scheduler.reconcile();
+
+        verify(deploymentService).scaleAsync(1L, 0);
+        verify(deploymentService, never()).deployAsync(anyLong());
+    }
+
+    @Test
     @DisplayName("reconcile -> keeps processing other services when one deploy fails")
     void reconcile_continuesAfterDeploymentFailure() {
         ProjectImage failingImage = buildImage(1L, "broken-svc", 2);
@@ -144,15 +163,12 @@ class SelfHealingSchedulerTest {
         when(containerInstanceRepository.countByProjectImageAndStatus(
                 healthyImage, ContainerInstance.InstanceStatus.PENDING)).thenReturn(0L);
 
-        // the first deploy throws, the second succeeds (explicit stub keeps
-        // Mockito's strict stubbing from flagging the mismatched argument)
         doThrow(new RuntimeException("Worker unavailable"))
                 .when(deploymentService).deployAsync(1L);
         doNothing().when(deploymentService).deployAsync(2L);
 
         scheduler.reconcile();
 
-        // deploy must have been queued for both images
         verify(deploymentService).deployAsync(1L);
         verify(deploymentService).deployAsync(2L);
     }
@@ -182,10 +198,6 @@ class SelfHealingSchedulerTest {
         verify(deploymentService).scaleAsync(1L, 1);
     }
 
-    // ──────────────────────────────────────────────────────────────
-    // Crash-loop backoff
-    // ──────────────────────────────────────────────────────────────
-
     @Test
     @DisplayName("reconcile -> a service with 5+ FAILED instances in 5 min counts as a crash loop: no deploy, enters cooldown")
     void reconcile_entersCooldownOnCrashLoop() {
@@ -194,7 +206,6 @@ class SelfHealingSchedulerTest {
         when(projectImageRepository.findAllWithProject()).thenReturn(List.of(image));
         when(containerInstanceRepository.countByProjectImageAndStatus(
                 image, ContainerInstance.InstanceStatus.RUNNING)).thenReturn(0L);
-        // the container keeps starting fine then dying: 6 FAILED records inside the window
         when(containerInstanceRepository.countByProjectImageAndStatusAndCreatedAtAfter(
                 eq(image), eq(ContainerInstance.InstanceStatus.FAILED), any()))
                 .thenReturn(6L);
@@ -202,7 +213,6 @@ class SelfHealingSchedulerTest {
         scheduler.reconcile();
 
         verify(deploymentService, never()).deployAsync(anyLong());
-        // the existing cooldown mechanism must be triggered (UI badge + 5 min wait)
         verify(projectImageRepository).save(image);
         org.assertj.core.api.Assertions.assertThat(image.getConsecutiveDeployFailures()).isGreaterThanOrEqualTo(5);
         org.assertj.core.api.Assertions.assertThat(image.getLastDeployFailureAt()).isNotNull();
@@ -225,10 +235,6 @@ class SelfHealingSchedulerTest {
         verify(deploymentService, times(1)).deployAsync(1L);
         verify(projectImageRepository, never()).save(any());
     }
-
-    // ──────────────────────────────────────────────────────────────
-    // Helpers
-    // ──────────────────────────────────────────────────────────────
 
     private ProjectImage buildImage(Long id, String serviceName, int desiredReplicas) {
         UserProject project = UserProject.builder()

@@ -14,11 +14,6 @@ import reactor.core.publisher.Mono;
 
 import java.util.Map;
 
-/**
-Gateway route management API.
-Called by the control plane. End users cannot reach these
- * endpoints directly.
- */
 @RestController
 @RequestMapping("/gateway")
 @RequiredArgsConstructor
@@ -99,7 +94,6 @@ public class GatewayManagementController {
     }
 
 
-    // Simple health check endpoint. x-api-key is not required
     @GetMapping("/health")
     public Mono<ResponseEntity<Map<String, Object>>> health() {
         return Mono.just(ResponseEntity.ok(Map.of(

@@ -34,22 +34,12 @@ public class ContainerInstance {
     @Column(nullable = false)
     private InstanceStatus status;
 
-    /**
-     * The container's internal IP on the project Docker network (172.x.x.x).
-     * The gateway routes traffic to this IP.
-     * Bilinmiyorsa null olabilir.
-     */
     @Column(name = "container_ip")
     private String containerIp;
 
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
-    /**
-     * When the container actually reached RUNNING. createdAt marks the PENDING
-     * reservation, which can precede this by minutes (image pull) - liveness
-     * grace periods must use this, not createdAt.
-     */
     @Column(name = "started_at")
     private Instant startedAt;
 
@@ -64,6 +54,7 @@ public class ContainerInstance {
     public enum InstanceStatus {
         PENDING,
         RUNNING,
+        STOPPING,
         STOPPED,
         FAILED
     }

@@ -68,11 +68,6 @@ public class ProjectController {
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
-    /**
-     * Updates the service configuration; running containers are recreated
-     * with the new configuration. serviceName and the replica count cannot
-     * be changed here (there is a separate scale endpoint).
-     */
     @PutMapping("/image/{imageId}")
     public ResponseEntity<Void> updateProjectImage(
             @PathVariable Long imageId,
@@ -116,11 +111,6 @@ public class ProjectController {
         return ResponseEntity.ok().build();
     }
 
-    /**
-     * Manually resets the self-healing backoff cooldown.
-     * Called after a broken image/env has been fixed;
-     * SelfHealingScheduler puts the service back into the retry loop.
-     */
     @PostMapping("/image/{imageId}/reset-failures")
     public ResponseEntity<Void> resetDeployFailures(
             @PathVariable Long imageId,

@@ -77,13 +77,10 @@ public class WorkerService {
         state.setUsedMemoryMb(0);
         state.setLastHeartbeat(Instant.now());
 
-        // If a worker the admin drained (MAINTENANCE) restarts its JVM and
-        // re-registers, the drain intent must survive - unconditionally setting
-        // ACTIVE would silently put a worker under maintenance back into scheduling.
         if (state.getStatus() != WorkerState.NodeStatus.MAINTENANCE) {
             state.setStatus(WorkerState.NodeStatus.ACTIVE);
         } else {
-            log.info("Worker {} re-registered while in MAINTENANCE - drain durumu korunuyor.", node.getId());
+            log.info("Worker {} re-registered while in MAINTENANCE - preserving maintenance state.", node.getId());
         }
 
         stateRepository.save(state);
@@ -131,10 +128,6 @@ public class WorkerService {
         }
         state.setCpuUsagePercent(cpuPercent);
 
-        // ALWAYS use the CP's own clock for liveness. The worker's timestamp cannot
-        // be trusted: if cross-machine clock skew exceeds 30s, a worker with a
-        // perfectly regular heartbeat keeps getting marked OFFLINE, its containers
-        // go FAILED and self-healing enters an endless restart loop.
         state.setLastHeartbeat(Instant.now());
         if (request.getTimestamp() != null) {
             long skewSeconds = Math.abs(
@@ -146,8 +139,6 @@ public class WorkerService {
             }
         }
 
-        // maintenance mode is only lifted by an admin - heartbeats must not override it.
-        // metrics and lastHeartbeat still update (liveness tracking continues).
         if (state.getStatus() == WorkerState.NodeStatus.MAINTENANCE) {
             stateRepository.save(state);
             log.debug("Heartbeat updated for worker {} (MAINTENANCE preserved)", workerId);
@@ -163,19 +154,20 @@ public class WorkerService {
                 log.warn("Worker {} CPU overloaded: {}%", workerId, cpuPercent);
             }
             if (memoryOverloaded) {
-                long memPercent = node.getTotalMemoryMb() > 0
-                        ? (usedMemory * 100) / node.getTotalMemoryMb() : 0;
-                log.warn("Worker {} Memory overloaded: {}% ({}/{} MB)",
-                        workerId, memPercent, usedMemory, node.getTotalMemoryMb());
+                log.warn("Worker {} Memory overloaded: {}/{} MB",
+                        workerId, usedMemory, node.getTotalMemoryMb());
             }
         } else {
             state.setStatus(WorkerState.NodeStatus.ACTIVE);
         }
 
         stateRepository.save(state);
+    }
 
-        log.debug("Heartbeat updated for worker: {} (cpu={}%, mem={} MB)",
-                workerId, cpuPercent, usedMemory);
+    private boolean isMemoryOverloaded(long usedMb, long totalMb) {
+        if (totalMb <= 0) return false;
+        long memoryPercent = (usedMb * 100) / totalMb;
+        return memoryPercent > MEMORY_OVERLOAD_THRESHOLD_PERCENT;
     }
 
     @Transactional
@@ -235,11 +227,6 @@ public class WorkerService {
                 }, () -> log.warn("Container status update for unknown container: {}", dockerId));
     }
 
-    /**
-     * Maintenance mode (drain). A MAINTENANCE worker is never picked by the
-     * scheduler (WorkerScoringService filters for ACTIVE only); its existing
-     * containers keep running. Heartbeats do not override this state.
-     */
     @Transactional
     public WorkerNodeDetailResponse setMaintenance(UUID workerId, boolean enabled, String adminUsername) {
 
@@ -252,8 +239,6 @@ public class WorkerService {
         if (enabled) {
             state.setStatus(WorkerState.NodeStatus.MAINTENANCE);
         } else {
-            // ACTIVE/OVERLOADED is recomputed on the first heartbeat;
-            // set ACTIVE right away so it isn't closed to the scheduler until then.
             state.setStatus(WorkerState.NodeStatus.ACTIVE);
         }
         stateRepository.save(state);
@@ -390,11 +375,5 @@ public class WorkerService {
             log.warn("VERSION CHANGE DETECTED for worker '{}' (id={}): version {} -> {}",
                     existing.getWorkerName(), existing.getId(), oldVersion, newVersion);
         }
-    }
-
-    private boolean isMemoryOverloaded(long usedMemoryMb, long totalMemoryMb) {
-        if (totalMemoryMb <= 0) return false;
-        long memoryPercent = (usedMemoryMb * 100) / totalMemoryMb;
-        return memoryPercent > MEMORY_OVERLOAD_THRESHOLD_PERCENT;
     }
 }

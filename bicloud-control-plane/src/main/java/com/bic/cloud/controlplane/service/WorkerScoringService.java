@@ -1,5 +1,7 @@
 package com.bic.cloud.controlplane.service;
 
+import com.bic.cloud.controlplane.model.ContainerInstance;
+import com.bic.cloud.controlplane.model.ProjectImage;
 import com.bic.cloud.controlplane.model.WorkerNode;
 import com.bic.cloud.controlplane.model.WorkerState;
 import com.bic.cloud.controlplane.repository.ContainerInstanceRepository;
@@ -15,28 +17,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.locks.ReentrantLock;
 
-/**
- * Worker selection combines two signals:
- *
- * 1. LIVE OS usage from heartbeats (cpuUsagePercent, usedMemoryMb).
- *    Insufficient on its own: it updates every ~10s and a freshly started idle
- *    container doesn't raise OS load immediately. Deploy 40 replicas in a row
- *    and they all pile onto the same worker.
- *
- * 2. RESERVATIONS in the DB: the summed limits of RUNNING/PENDING containers
- *    assigned to the worker. A PENDING row is committed before the worker call,
- *    so every replica pick accounts for the previous one - including deploys
- *    running concurrently on other threads (a simplified version of
- *    Kubernetes' request-based scheduling).
- *
- * The score uses the pessimistic (max usage) of the two signals.
- *
- * On top of that, SOFT ANTI-AFFINITY: live replicas of the service being placed
- * subtract a diminishing penalty from that worker's score. The first same-service
- * replica strongly nudges the next one elsewhere; later replicas matter less, so
- * resource availability can dominate after the service has been spread.
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -45,6 +27,8 @@ public class WorkerScoringService {
     private final WorkerNodeRepository nodeRepository;
     private final WorkerStateRepository stateRepository;
     private final ContainerInstanceRepository containerInstanceRepository;
+
+    private final ReentrantLock schedulerLock = new ReentrantLock();
 
     private static final double CPU_FREE_WEIGHT = 0.5;
     private static final double MEMORY_FREE_WEIGHT = 0.5;
@@ -88,7 +72,6 @@ public class WorkerScoringService {
         return selectBestWorker(null);
     }
 
-    /** @param imageId service being placed - enables the anti-affinity penalty (null = off) */
     public Optional<WorkerNode> selectBestWorker(Long imageId) {
 
         List<WorkerState> activeStates = stateRepository.findAll()
@@ -114,7 +97,6 @@ public class WorkerScoringService {
         return selectBestWorkerWithCapacity(requiredCpuMillicores, requiredMemoryMb, null);
     }
 
-    /** @param imageId service being placed - enables the anti-affinity penalty (null = off) */
     public Optional<WorkerNode> selectBestWorkerWithCapacity(int requiredCpuMillicores, long requiredMemoryMb,
                                                              Long imageId) {
 
@@ -152,11 +134,32 @@ public class WorkerScoringService {
                 .map(WorkerState::getWorker);
     }
 
-    /**
-     * Resource score minus the anti-affinity penalty. Only the relative order
-     * matters, so a lone worker hosting every replica is still chosen when
-     * nothing else is available.
-     */
+    public Optional<ContainerInstance> selectAndReserveWorker(
+            ProjectImage projectImage, int requiredCpuMillicores, long requiredMemoryMb) {
+
+        schedulerLock.lock();
+        try {
+            Long imageId = projectImage != null ? projectImage.getId() : null;
+            Optional<WorkerNode> bestWorker = selectBestWorkerWithCapacity(
+                    requiredCpuMillicores, requiredMemoryMb, imageId);
+
+            if (bestWorker.isEmpty()) {
+                return Optional.empty();
+            }
+
+            ContainerInstance instance = containerInstanceRepository.save(
+                    ContainerInstance.builder()
+                            .projectImage(projectImage)
+                            .workerNode(bestWorker.get())
+                            .status(ContainerInstance.InstanceStatus.PENDING)
+                            .build());
+
+            return Optional.of(instance);
+        } finally {
+            schedulerLock.unlock();
+        }
+    }
+
     private double placementScore(WorkerState state,
                                   Map<UUID, Reservation> reservations,
                                   Map<UUID, Long> replicasOnWorker) {
@@ -169,12 +172,6 @@ public class WorkerScoringService {
         return score - antiAffinityPenalty(existingReplicas);
     }
 
-    /**
-     * Diminishing same-service penalty:
-     * 1 replica => 25, 2 => 37.5, 3 => 43.75, asymptotically approaching 50.
-     * This preserves the initial spread while allowing resource score to matter
-     * more once every worker already hosts the service.
-     */
     private double antiAffinityPenalty(long existingReplicas) {
         if (existingReplicas <= 0) {
             return 0.0;
@@ -184,7 +181,6 @@ public class WorkerScoringService {
                 / (1 - ANTI_AFFINITY_DECAY);
     }
 
-    /** Live replicas of the image per worker; empty map when imageId is null (penalty off). */
     private Map<UUID, Long> loadReplicaCounts(Long imageId) {
         if (imageId == null) {
             return Map.of();
@@ -196,11 +192,6 @@ public class WorkerScoringService {
         return map;
     }
 
-    /**
-     * Summed RUNNING/PENDING container limits per worker. Deploys commit a
-     * PENDING row before calling the worker, so assignments made moments ago -
-     * on this thread or any other - immediately lower the next pick's score.
-     */
     private Map<UUID, Reservation> loadReservations() {
         Map<UUID, Reservation> map = new HashMap<>();
         for (Object[] row : containerInstanceRepository.sumReservedResourcesByWorker()) {

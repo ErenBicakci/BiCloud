@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -29,6 +30,7 @@ public class DockerContainerService {
     static final String LABEL_PORT    = "bicloud.port";
     static final String LABEL_MANAGED = "bicloud.managed";
     static final String LABEL_MANAGED_VALUE = "true";
+    public static final String LABEL_INSTANCE_ID = "bicloud.instance_id";
     private static final int MIN_LOG_TAIL_LINES = 1;
     private static final int MAX_LOG_TAIL_LINES = 1000;
 
@@ -62,29 +64,56 @@ public class DockerContainerService {
                         .map(e -> e.getKey() + "=" + e.getValue())
                         .collect(Collectors.toList());
 
+        if (req.getInstanceId() != null && !req.getInstanceId().isBlank()) {
+            List<Container> existing = dockerClient.listContainersCmd()
+                    .withShowAll(true)
+                    .withLabelFilter(Map.of(LABEL_INSTANCE_ID, req.getInstanceId()))
+                    .exec();
+
+            if (!existing.isEmpty()) {
+                Container match = existing.get(0);
+                log.info("Found existing container {} for instanceId={}. Reusing.", match.getId(), req.getInstanceId());
+
+                if (!"running".equalsIgnoreCase(match.getState())) {
+                    try {
+                        dockerClient.startContainerCmd(match.getId()).exec();
+                    } catch (Exception e) {
+                        log.warn("Failed to restart existing container {}: {}", match.getId(), e.getMessage());
+                    }
+                }
+
+                InspectContainerResponse inspect = dockerClient.inspectContainerCmd(match.getId()).exec();
+                String containerIp = extractContainerIp(inspect, networkName);
+
+                return new ContainerCreateResponse(match.getId(), containerIp, "Container reused successfully");
+            }
+        }
+
         String safeProject  = sanitizeForDockerName(req.getProjectName(), "projectName");
         String safeService  = sanitizeForDockerName(req.getServiceName(), "serviceName");
-        String containerName = safeProject + "-" + safeService + "-" + UUID.randomUUID();
+        String uniqueSuffix = (req.getInstanceId() != null && !req.getInstanceId().isBlank())
+                ? req.getInstanceId() : UUID.randomUUID().toString();
+        String containerName = safeProject + "-" + safeService + "-" + uniqueSuffix;
+
+        Map<String, String> labels = new HashMap<>();
+        labels.put(LABEL_MANAGED,     LABEL_MANAGED_VALUE);
+        labels.put(LABEL_PROJECT,     req.getProjectName());
+        labels.put(LABEL_SERVICE,     req.getServiceName());
+        labels.put(LABEL_PORT,        String.valueOf(req.getContainerPort()));
+        if (req.getInstanceId() != null && !req.getInstanceId().isBlank()) {
+            labels.put(LABEL_INSTANCE_ID, req.getInstanceId());
+        }
 
         CreateContainerResponse created = dockerClient.createContainerCmd(req.getImageName())
                 .withName(containerName)
                 .withHostConfig(hostConfig)
                 .withExposedPorts(exposedPort)
                 .withEnv(envList)
-                .withLabels(Map.of(
-                        LABEL_MANAGED,     LABEL_MANAGED_VALUE,
-                        LABEL_PROJECT,     req.getProjectName(),
-                        LABEL_SERVICE,     req.getServiceName(),
-                        LABEL_PORT,        String.valueOf(req.getContainerPort())
-                ))
+                .withLabels(labels)
                 .exec();
 
         String containerId = created.getId();
 
-        // If any step after container creation blows up, the created but
-        // untracked container lingers in Docker (no response reaches the CP,
-        // so its record has no dockerContainerId -> reconciliation can't clean it).
-        // Hence on failure we force-remove the half-created container.
         try {
             dockerClient.connectToNetworkCmd()
                     .withContainerId(containerId)
@@ -93,9 +122,6 @@ public class DockerContainerService {
                             .withAliases(List.of(req.getServiceName())))
                     .exec();
 
-            // admin-granted egress: also attach to this project's egress bridge
-            // (the internal project network has no outbound route). Per-project
-            // so egress-enabled tenants never share an L2 segment.
             if (req.isAllowInternet()) {
                 String egressNetworkId = dockerNetworkService.ensureEgressNetworkExists(req.getProjectName());
                 dockerClient.connectToNetworkCmd()
@@ -105,11 +131,6 @@ public class DockerContainerService {
                 log.info("Container {} attached to egress network (allowInternet=true)", containerName);
             }
 
-            // Fail-CLOSED: the container is born on Docker's default bridge (which
-            // reaches the internet) and must be detached before it starts. If the
-            // disconnect fails we must NOT start it - an isolated (allowInternet=false)
-            // service would otherwise leak onto the internet. Verify with inspect and
-            // let the outer catch clean up the half-created container.
             try {
                 dockerClient.disconnectFromNetworkCmd()
                         .withNetworkId("bridge")
@@ -149,13 +170,6 @@ public class DockerContainerService {
         }
     }
 
-    /**
-     * "IfNotPresent" pull policy: an unconditional pull contacts the registry
-     * on EVERY deploy even when the image is already local - needless latency
-     * and it eats into Docker Hub rate limits. Tags are treated as immutable
-     * here; a user who republishes the same tag redeploys with a version bump
-     * (or the image can be removed manually on the worker).
-     */
     private void pullImageIfMissing(String imageName) throws InterruptedException {
         try {
             dockerClient.inspectImageCmd(imageName).exec();
@@ -246,11 +260,6 @@ public class DockerContainerService {
         return (ip != null && !ip.isBlank()) ? ip : null;
     }
 
-    /**
-     * True if the container is still attached to Docker's default "bridge"
-     * network. Used to enforce fail-closed isolation: a container that could not
-     * be detached from the internet-facing bridge must not be started.
-     */
     private boolean isConnectedToBridge(String containerId) {
         try {
             var networks = dockerClient.inspectContainerCmd(containerId)

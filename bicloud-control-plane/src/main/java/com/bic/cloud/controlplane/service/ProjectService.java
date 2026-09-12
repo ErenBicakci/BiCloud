@@ -44,9 +44,6 @@ public class ProjectService {
         BicloudUser owner = userRepository.findById(caller.getId())
                 .orElseThrow(() -> new UsernameNotFoundException("User not found"));
 
-        // globally unique - every isolation identity (network, route, mesh,
-        // discovery) derives from the name. The DB constraint is the backstop;
-        // this check produces the friendly 409.
         if (userProjectRepository.existsByName(dto.getName())) {
             throw NameConflictException.projectName(dto.getName());
         }
@@ -75,7 +72,6 @@ public class ProjectService {
                 .orElseThrow(() -> new ProjectNotFoundException(id));
     }
 
-    //ownership check
     public void assertOwnerOrAdmin(UserProject project, BicloudUserDetails caller) {
         boolean isAdmin = caller.getAuthorities().stream()
                 .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));

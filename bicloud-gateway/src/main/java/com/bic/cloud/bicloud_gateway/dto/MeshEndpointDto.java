@@ -4,10 +4,6 @@ import lombok.Data;
 
 import java.util.UUID;
 
-/**
- * Service endpoint info returned from the control plane's
- * /api/workers/discover/{project}/{service} endpoint (mirrors ServiceEndpointDto on the CP side).
- */
 @Data
 public class MeshEndpointDto {
     private String serviceName;

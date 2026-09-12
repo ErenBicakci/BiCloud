@@ -46,10 +46,6 @@ public class ContainerManagementController {
         return ResponseEntity.ok(response);
     }
 
-    /**
-     * Live CPU/RAM samples + sparkline history for the RUNNING containers
-     * of a project (optionally a single service).
-     */
     @GetMapping("/project/{projectId}/metrics")
     public ResponseEntity<List<ContainerMetricsResponse>> getMetricsByProject(
             @PathVariable Long projectId,

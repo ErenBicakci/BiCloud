@@ -54,7 +54,6 @@ public class GlobalErrorHandler implements ErrorWebExceptionHandler {
         if (ex instanceof ResponseStatusException rse) {
             return HttpStatus.valueOf(rse.getStatusCode().value());
         }
-        // upstream connection error: container is down or unreachable
         if (ex instanceof ConnectException
                 || ex.getCause() instanceof ConnectException) {
             return HttpStatus.BAD_GATEWAY;
@@ -75,10 +74,6 @@ public class GlobalErrorHandler implements ErrorWebExceptionHandler {
         return ex.getMessage() != null ? ex.getMessage() : status.getReasonPhrase();
     }
 
-    /**
-     * Escapes problematic characters inside a JSON string.
-     * Prevents malicious exception messages from breaking the JSON.
-     */
     private String sanitize(String msg) {
         if (msg == null) return "";
         return msg.replace("\"", "'").replace("\n", " ").replace("\r", "");

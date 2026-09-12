@@ -1,5 +1,8 @@
 package com.bic.cloud.controlplane.service;
 
+import com.bic.cloud.controlplane.exception.NoAvailableWorkerException;
+import com.bic.cloud.controlplane.model.ContainerInstance;
+import com.bic.cloud.controlplane.model.ProjectImage;
 import com.bic.cloud.controlplane.model.WorkerNode;
 import com.bic.cloud.controlplane.model.WorkerState;
 import com.bic.cloud.controlplane.repository.ContainerInstanceRepository;
@@ -18,7 +21,11 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -56,10 +63,6 @@ class WorkerScoringServiceTest {
                 .usedMemoryMb(0)
                 .build();
     }
-
-    // ──────────────────────────────────────────────────────────────
-    // calculateScore
-    // ──────────────────────────────────────────────────────────────
 
     @Test
     @DisplayName("calculateScore -> returns 0.0 for a null node")
@@ -99,7 +102,6 @@ class WorkerScoringServiceTest {
 
         double score = scoringService.calculateScore(node, activeState);
 
-        // cpuFree=100, memFree=100 -> score = 0.5*100 + 0.5*100 = 100
         assertThat(score).isCloseTo(100.0, within(0.001));
     }
 
@@ -107,11 +109,10 @@ class WorkerScoringServiceTest {
     @DisplayName("calculateScore -> gives 50 points at 50% CPU and 50% RAM usage")
     void calculateScore_halfLoadedWorkerGetsHalfScore() {
         activeState.setCpuUsagePercent(50);
-        activeState.setUsedMemoryMb(4096); // 4096/8192 = 50%
+        activeState.setUsedMemoryMb(4096);
 
         double score = scoringService.calculateScore(node, activeState);
 
-        // cpuFree=50, memFree=50 -> score = 0.5*50 + 0.5*50 = 50
         assertThat(score).isCloseTo(50.0, within(0.001));
     }
 
@@ -123,7 +124,6 @@ class WorkerScoringServiceTest {
 
         double score = scoringService.calculateScore(node, activeState);
 
-        // cpuFree=0, memFree=0 -> score = 0
         assertThat(score).isCloseTo(0.0, within(0.001));
     }
 
@@ -135,13 +135,8 @@ class WorkerScoringServiceTest {
 
         double score = scoringService.calculateScore(node, activeState);
 
-        // memFree=0 (division guard), cpuFree=100 -> score = 50
         assertThat(score).isCloseTo(50.0, within(0.001));
     }
-
-    // ──────────────────────────────────────────────────────────────
-    // selectBestWorker
-    // ──────────────────────────────────────────────────────────────
 
     @Test
     @DisplayName("selectBestWorker -> returns empty when no worker is active")
@@ -176,7 +171,6 @@ class WorkerScoringServiceTest {
                 .usedMemoryMb(3900)
                 .build();
 
-        // activeState: idle (score~100), busyState: busy (low score)
         when(stateRepository.findAll()).thenReturn(List.of(busyState, activeState));
 
         Optional<WorkerNode> result = scoringService.selectBestWorker();
@@ -218,9 +212,6 @@ class WorkerScoringServiceTest {
                 .usedMemoryMb(0)
                 .build();
 
-        // per heartbeat both are idle - but test-worker has 6 GB / 6 cores
-        // reserved (just-assigned containers). The score must account for the
-        // reservation and pick second-worker.
         when(stateRepository.findAll()).thenReturn(List.of(activeState, secondState));
         when(containerInstanceRepository.sumReservedResourcesByWorker())
                 .thenReturn(List.<Object[]>of(new Object[]{node.getId(), 6144L, 6.0}));
@@ -253,8 +244,6 @@ class WorkerScoringServiceTest {
                 .usedMemoryMb(0)
                 .build();
 
-        // both idle and identical - but test-worker already hosts 2 replicas
-        // of the service being placed
         when(stateRepository.findAll()).thenReturn(List.of(activeState, secondState));
         when(containerInstanceRepository.countAliveReplicasPerWorker(42L))
                 .thenReturn(List.<Object[]>of(new Object[]{node.getId(), 2L}));
@@ -280,11 +269,9 @@ class WorkerScoringServiceTest {
                 .worker(busyNode)
                 .status(WorkerState.NodeStatus.ACTIVE)
                 .cpuUsagePercent(90)
-                .usedMemoryMb(7373) // ~90% -> score ~10
+                .usedMemoryMb(7373)
                 .build();
 
-        // test-worker: idle (score 100) but hosts 1 replica -> 100-25=75
-        // busy-empty-worker: no replicas but ~90% loaded -> ~10
         when(stateRepository.findAll()).thenReturn(List.of(activeState, busyState));
         when(containerInstanceRepository.countAliveReplicasPerWorker(42L))
                 .thenReturn(List.<Object[]>of(new Object[]{node.getId(), 1L}));
@@ -313,8 +300,6 @@ class WorkerScoringServiceTest {
                 .usedMemoryMb(4096)
                 .build();
 
-        // test-worker: idle score 100, hosts 3 replicas -> penalty 43.75, placement score 56.25
-        // half-loaded-empty-worker: no replicas, resource score 50
         when(stateRepository.findAll()).thenReturn(List.of(activeState, halfLoadedState));
         when(containerInstanceRepository.countAliveReplicasPerWorker(42L))
                 .thenReturn(List.<Object[]>of(new Object[]{node.getId(), 3L}));
@@ -328,7 +313,6 @@ class WorkerScoringServiceTest {
     @Test
     @DisplayName("selectBestWorker -> a lone worker is still chosen even when it hosts every replica")
     void selectBestWorker_lonWorkerStillChosenDespitePenalty() {
-        // 5 replicas -> score 100 - 48.4375, but it is the only candidate
         when(stateRepository.findAll()).thenReturn(List.of(activeState));
         when(containerInstanceRepository.countAliveReplicasPerWorker(42L))
                 .thenReturn(List.<Object[]>of(new Object[]{node.getId(), 5L}));
@@ -367,14 +351,9 @@ class WorkerScoringServiceTest {
         assertThat(result.get().getWorkerName()).isEqualTo("second-worker");
     }
 
-    // ──────────────────────────────────────────────────────────────
-    // selectBestWorkerWithCapacity
-    // ──────────────────────────────────────────────────────────────
-
     @Test
     @DisplayName("selectBestWorkerWithCapacity -> reserved memory counts in the capacity check even when the heartbeat looks idle")
     void selectBestWorkerWithCapacity_filtersByReservedMemory() {
-        // OS usage is 0 but 8000 MB reserved -> 192 MB free, a 500 MB request cannot fit
         when(stateRepository.findAll()).thenReturn(List.of(activeState));
         when(containerInstanceRepository.sumReservedResourcesByWorker())
                 .thenReturn(List.<Object[]>of(new Object[]{node.getId(), 8000L, 1.0}));
@@ -387,11 +366,10 @@ class WorkerScoringServiceTest {
     @Test
     @DisplayName("selectBestWorkerWithCapacity -> filters out a worker without enough memory")
     void selectBestWorkerWithCapacity_filtersWorkersBelowMemoryRequirement() {
-        activeState.setUsedMemoryMb(8000); // only 192 MB free
+        activeState.setUsedMemoryMb(8000);
 
         when(stateRepository.findAll()).thenReturn(List.of(activeState));
 
-        // 500 MB RAM needed, only 192 MB free
         Optional<WorkerNode> result = scoringService.selectBestWorkerWithCapacity(0, 500);
 
         assertThat(result).isEmpty();
@@ -400,12 +378,10 @@ class WorkerScoringServiceTest {
     @Test
     @DisplayName("selectBestWorkerWithCapacity -> filters out a worker without enough CPU")
     void selectBestWorkerWithCapacity_filtersWorkersBelowCpuRequirement() {
-        activeState.setCpuUsagePercent(99); // almost no CPU left
-        // 8 cores * 1000 millicores = 8000 total, 1% free = 80 millicores
+        activeState.setCpuUsagePercent(99);
 
         when(stateRepository.findAll()).thenReturn(List.of(activeState));
 
-        // 1000 millicores needed, only ~80 free
         Optional<WorkerNode> result = scoringService.selectBestWorkerWithCapacity(1000, 0);
 
         assertThat(result).isEmpty();
@@ -429,8 +405,6 @@ class WorkerScoringServiceTest {
                 .usedMemoryMb(0)
                 .build();
 
-        // activeState: idle, 8GB RAM -> has enough capacity
-        // smallState: idle, 1GB RAM -> NOT enough for 1500 MB
         when(stateRepository.findAll()).thenReturn(List.of(smallState, activeState));
 
         Optional<WorkerNode> result = scoringService.selectBestWorkerWithCapacity(0, 1500);
@@ -449,5 +423,75 @@ class WorkerScoringServiceTest {
         Optional<WorkerNode> result = scoringService.selectBestWorkerWithCapacity(0, 1000);
 
         assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("selectAndReserveWorker -> successfully reserves PENDING instance when capacity exists")
+    void selectAndReserveWorker_success() {
+        ProjectImage image = ProjectImage.builder()
+                .id(10L)
+                .serviceName("api")
+                .cpuLimit(0.5)
+                .memoryLimitMb(512)
+                .build();
+
+        when(stateRepository.findAll()).thenReturn(List.of(activeState));
+        when(containerInstanceRepository.save(any(ContainerInstance.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        Optional<ContainerInstance> reservation =
+                scoringService.selectAndReserveWorker(image, 500, 512);
+
+        assertThat(reservation).isPresent();
+        ContainerInstance instance = reservation.get();
+        assertThat(instance.getWorkerNode().getWorkerName()).isEqualTo("test-worker");
+        assertThat(instance.getStatus()).isEqualTo(ContainerInstance.InstanceStatus.PENDING);
+        assertThat(instance.getProjectImage()).isEqualTo(image);
+        assertThat(instance.getWorkerNode()).isEqualTo(node);
+        verify(containerInstanceRepository).save(any(ContainerInstance.class));
+    }
+
+    @Test
+    @DisplayName("selectAndReserveWorker -> returns empty when capacity is insufficient")
+    void selectAndReserveWorker_returnsEmptyWhenNoCapacity() {
+        activeState.setUsedMemoryMb(8000);
+
+        ProjectImage image = ProjectImage.builder()
+                .id(10L)
+                .serviceName("api")
+                .cpuLimit(0.0)
+                .memoryLimitMb(1024)
+                .build();
+
+        when(stateRepository.findAll()).thenReturn(List.of(activeState));
+
+        Optional<ContainerInstance> reservation =
+                scoringService.selectAndReserveWorker(image, 0, 1024);
+
+        assertThat(reservation).isEmpty();
+        verify(containerInstanceRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("selectAndReserveWorker -> accounts for in-flight PENDING instance capacity on worker")
+    void selectAndReserveWorker_accountsForPendingInstancesOnWorker() {
+        Object[] workerReservation = new Object[]{node.getId(), 7500L, 1.0};
+        when(containerInstanceRepository.sumReservedResourcesByWorker())
+                .thenReturn(List.<Object[]>of(workerReservation));
+
+        when(stateRepository.findAll()).thenReturn(List.of(activeState));
+
+        ProjectImage newImage = ProjectImage.builder()
+                .id(11L)
+                .serviceName("web")
+                .cpuLimit(0.0)
+                .memoryLimitMb(800)
+                .build();
+
+        Optional<ContainerInstance> reservation =
+                scoringService.selectAndReserveWorker(newImage, 0, 800);
+
+        assertThat(reservation).isEmpty();
+        verify(containerInstanceRepository, never()).save(any());
     }
 }

@@ -22,14 +22,8 @@ public interface ProjectImageRepository extends JpaRepository<ProjectImage, Long
 
     List<ProjectImage> findByProject_Id(Long projectId);
 
-    /** Route key is projectName:serviceName -> a service name must be unique within its project. */
     boolean existsByProject_IdAndServiceName(Long projectId, String serviceName);
 
-    /**
-     * Fully initialized load for callers running OUTSIDE a transaction /
-     * request session (self-healing, async deploys): project, owner and the
-     * env-var map are all fetch-joined so no lazy access happens later.
-     */
     @Query("""
         SELECT DISTINCT pi FROM ProjectImage pi
         JOIN FETCH pi.project p
@@ -38,7 +32,6 @@ public interface ProjectImageRepository extends JpaRepository<ProjectImage, Long
     """)
     List<ProjectImage> findAllWithProject();
 
-    /** Single-image variant of {@link #findAllWithProject()}. */
     @Query("""
         SELECT pi FROM ProjectImage pi
         JOIN FETCH pi.project p

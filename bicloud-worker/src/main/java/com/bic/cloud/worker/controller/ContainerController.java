@@ -21,7 +21,6 @@ public class ContainerController {
 
     private final DockerContainerService dockerContainerService;
 
-    /** DNS alias of this machine's gateway on the tenant networks (mesh access). */
     @Value("${bicloud.gateway.alias:bicloud-gateway}")
     private String gatewayAlias;
 

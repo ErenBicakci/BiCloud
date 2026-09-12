@@ -21,10 +21,6 @@ public class ServiceDiscoveryService {
     private final ContainerInstanceRepository containerInstanceRepository;
     private final WorkerStateRepository workerStateRepository;
 
-    /**
-     * Endpoint used by the mesh proxy -
-     * returns endpoint info for all RUNNING instances of the given project/service.
-     */
     public List<ServiceEndpointDto> getEndpoints(String projectName, String serviceName) {
         List<ContainerInstance> instances =
                 containerInstanceRepository.findRunningByProjectNameAndServiceName(projectName, serviceName);
@@ -60,24 +56,12 @@ public class ServiceDiscoveryService {
                 .build();
     }
 
-    /** The gateway's DNS alias on every tenant network (must match GatewayNetworkManager). */
     @Value("${bicloud.gateway.alias:bicloud-gateway}")
     private String gatewayAlias;
 
-    /** Port the gateway container listens on. */
     @Value("${bicloud.gateway.port:9000}")
     private int gatewayPort;
 
-    /**
-     * The ONE address contract the platform hands to containers: the mesh base.
-     *
-     * The gateway joins every tenant network under the same alias, so this
-     * address is identical on every machine; the app builds the target address
-     * itself as {@code MESH_BASE + "/" + serviceName + path}.
-     * Per-service envs (_URL/_HOST/_PORT) are deliberately not provided - the
-     * _HOST alias only resolved on the same machine, which was misleading;
-     * the platform offers no real DNS resolution.
-     */
     public String meshBaseUrl(String projectName) {
         return "http://" + gatewayAlias + ":" + gatewayPort + "/_bicloud/mesh/" + projectName;
     }

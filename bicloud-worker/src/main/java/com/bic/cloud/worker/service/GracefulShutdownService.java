@@ -9,14 +9,6 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Gracefully stops every BiCloud container running on this worker during
- * shutdown.
- *
- * The {@code bicloud.managed=true} Docker label added at creation time tells
- * us which containers are ours, so containers running on the machine for
- * other purposes are left untouched.
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -28,10 +20,6 @@ public class GracefulShutdownService {
 
     private final DockerClient dockerClient;
 
-    /**
-     * Stops all running containers carrying the {@code bicloud.managed=true}
-     * label. Called from the worker's {@code @PreDestroy} phase.
-     */
     public void stopAllManagedContainers() {
         List<Container> running = findManagedRunningContainers();
 

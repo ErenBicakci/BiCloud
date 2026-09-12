@@ -35,7 +35,6 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         if (path.startsWith("/api/containers")) {
             String providedKey = request.getHeader(API_KEY_HEADER);
 
-            // constant-time comparison - String.equals leaks the match length via timing
             if (providedKey == null || !MessageDigest.isEqual(
                     providedKey.getBytes(StandardCharsets.UTF_8),
                     apiKey.getBytes(StandardCharsets.UTF_8))) {

@@ -16,11 +16,6 @@ public class GatewayAdminController {
 
     private final GatewayNotificationService gatewayNotificationService;
 
-    /**
-     * Re-registers every RUNNING container in the DB with the gateway.
-     * Happens automatically on CP restart; this is the manual trigger.
-     * @return number of re-registered containers
-     */
     @PostMapping("/resync")
     public ResponseEntity<Map<String, Object>> resync() {
         int count = gatewayNotificationService.resyncAll();

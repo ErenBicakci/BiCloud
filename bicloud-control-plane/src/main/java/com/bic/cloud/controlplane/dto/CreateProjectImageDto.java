@@ -11,10 +11,6 @@ public class CreateProjectImageDto {
     @NotNull(message = "projectId is required")
     private Long projectId;
 
-    /**
-     * The service name doubles as the Docker network alias.
-     * Follows the same naming rules as the project name.
-     */
     @NotBlank(message = "Service name must not be blank.")
     @Size(min = 2, max = 50,
           message = "Service name must be between 2 and 50 characters.")
@@ -88,10 +84,8 @@ public class CreateProjectImageDto {
     @DecimalMax(value = "4.0", message = "cpuLimit may be at most 4.0 cores.")
     private Double cpuLimit;
 
-    /** Egress opt-in; only admins may set it to true (checked in the service layer). */
     private boolean allowInternet;
 
-    /** Ingress opt-in: whether this service accepts external host-based gateway traffic. */
     private boolean exposeExternally;
 
     @AssertTrue(message = "minReplicas must be less than or equal to maxReplicas.")

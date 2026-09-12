@@ -27,50 +27,26 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
-/**
- * East-west (service -> service) mesh routing. Containers call other services at
- * http://bicloud-gateway:9000/_bicloud/mesh/{project}/{service}/...
- * (a Docker DNS alias, identical on every machine).
- *
- * If the target service is in this gateway's registry the request goes straight
- * to the container; otherwise the CP is asked for an endpoint and the request is
- * forwarded to the target machine's gateway, which delivers it locally. A request
- * that arrived remotely (hops > 0) is not forwarded to another machine again, so
- * no loop can form.
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class MeshRoutingFilter implements GlobalFilter, Ordered {
 
     public static final String MESH_PREFIX = "/_bicloud/mesh/";
-
-    /** Hop counter between gateways - shared with DynamicRoutingFilter (north-south). */
     public static final String HOPS_HEADER = "X-BiCloud-Mesh-Hops";
-
-    /** Gateway-to-gateway identity: proves that a hops > 0 request really came from
-     *  a gateway - a tenant container cannot forge the hops header and skip the
-     *  isolation check. */
     public static final String GATEWAY_KEY_HEADER = "X-BiCloud-Gateway-Key";
-
-    /** Caller project the first gateway VERIFIED from the subnet - stamped on the
-     *  hop request so the receiving gateway can compare it against the target project. */
     public static final String CALLER_PROJECT_HEADER = "X-BiCloud-Caller-Project";
 
     private static final int MAX_HOPS = 3;
-
-    /** Right after RouteToRequestUrlFilter (10000), same order as DynamicRoutingFilter. */
     private static final int ORDER = 10001;
 
     private final RouteRegistry registry;
     private final ControlPlaneDiscoveryClient discoveryClient;
     private final GatewayNetworkManager networkManager;
 
-    /** Host port of the gateways on other machines (must be the same everywhere). */
     @Value("${bicloud.gateway.port:9000}")
     private int remoteGatewayPort;
 
-    /** Shared key, identical on all gateways (provided via compose env). */
     @Value("${bicloud.gateway.api-key}")
     private String gatewayApiKey;
 
@@ -83,7 +59,7 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String rawPath = exchange.getRequest().getURI().getRawPath();
         if (!rawPath.startsWith(MESH_PREFIX)) {
-            return chain.filter(exchange); // north-south -> handled by DynamicRoutingFilter
+            return chain.filter(exchange);
         }
 
         MeshTarget target = parseMeshPath(rawPath);
@@ -108,9 +84,7 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
                     "Mesh routing hop limit exceeded.");
         }
 
-        // ── Tenant isolation ───────────────────────────────────────────────
         if (gatewayHop) {
-            // the caller project verified by the first gateway must equal the target project.
             String callerProject = exchange.getRequest().getHeaders().getFirst(CALLER_PROJECT_HEADER);
             if (callerProject == null || !callerProject.equalsIgnoreCase(target.project())) {
                 log.warn("[Mesh] Tenant isolation (hop): caller project={} -> {}/{} rejected",
@@ -119,8 +93,6 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
                         "Over the mesh you can only reach services in your own project.");
             }
         } else {
-            // first request from a container: derive the caller's project from the
-            // source IP's subnet - it may only reach services in its OWN project.
             String callerIp = remoteIp(exchange);
             Optional<String> callerProject = callerIp == null
                     ? Optional.empty() : networkManager.projectForIp(callerIp);
@@ -133,20 +105,14 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
             }
         }
 
-        // 1) local delivery: is the service on this machine? (RouteRegistry only holds local instances)
         Optional<ServiceInstance> local = registry.resolve(target.project(), target.service());
         if (local.isPresent()) {
             URI targetUri = buildLocalUri(local.get(), target, exchange);
             log.debug("[Mesh] local {} {} -> {}", exchange.getRequest().getMethod(), rawPath, targetUri);
             exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_REQUEST_URL_ATTR, targetUri);
-            // strip internal gateway headers before the request reaches the tenant
-            // container - the gateway key especially must never be visible upstream
-            // (it authorizes /gateway/register etc.)
             return chain.filter(stripInternalHeaders(exchange));
         }
 
-        // 2) arrived remotely but there is no local instance -> do NOT forward again (loop risk).
-        //    the instance died between the CP's response and the request arriving.
         if (gatewayHop) {
             log.warn("[Mesh] No local instance for a remote request: {}/{}",
                     target.project(), target.service());
@@ -154,7 +120,6 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
                     "Service '%s' no longer runs on this node.".formatted(target.service()));
         }
 
-        // 3) remote delivery: get an endpoint from the CP, forward to the target machine's gateway
         return discoveryClient.discover(target.project(), target.service())
                 .flatMap(endpoints -> forwardToRemoteGateway(exchange, chain, target, endpoints, hops));
     }
@@ -190,9 +155,7 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
         ServerWebExchange mutated = exchange.mutate()
                 .request(r -> r.headers(h -> {
                     h.set(HOPS_HEADER, String.valueOf(hops + 1));
-                    h.set(GATEWAY_KEY_HEADER, gatewayApiKey); // identity proof to the receiving gateway
-                    // it passed the isolation check, so caller project == target project;
-                    // the receiving gateway compares it against the target project again.
+                    h.set(GATEWAY_KEY_HEADER, gatewayApiKey);
                     h.set(CALLER_PROJECT_HEADER, target.project());
                 }))
                 .build();
@@ -201,12 +164,6 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
         return chain.filter(mutated);
     }
 
-    /**
-     * Removes gateway-internal headers so they never reach the tenant container.
-     * Covers both the ones this gateway stamps on hops and any a tenant might try
-     * to spoof on an outbound request. The gateway key is the critical one - it
-     * authorizes the gateway management API.
-     */
     private ServerWebExchange stripInternalHeaders(ServerWebExchange exchange) {
         return exchange.mutate()
                 .request(r -> r.headers(h -> {
@@ -217,14 +174,12 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
                 .build();
     }
 
-    /** For a local instance: strip the mesh prefix, the remaining sub-path goes to the container. */
     private URI buildLocalUri(ServiceInstance instance, MeshTarget target, ServerWebExchange exchange) {
         String subPath = target.subPath().isEmpty() ? "/" : target.subPath();
         String query = exchange.getRequest().getURI().getRawQuery();
         return URI.create(instance.toUri() + subPath + (query != null ? "?" + query : ""));
     }
 
-    /** "/_bicloud/mesh/proje/servis/alt/yol" -> (proje, servis, "/alt/yol") */
     private MeshTarget parseMeshPath(String rawPath) {
         String rest = rawPath.substring(MESH_PREFIX.length());
         int firstSlash = rest.indexOf('/');
@@ -245,7 +200,6 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
         return new MeshTarget(project, service, subPath);
     }
 
-    /** Source IPv4 of the TCP connection (not a header - cannot be forged). */
     private String remoteIp(ServerWebExchange exchange) {
         var remote = exchange.getRequest().getRemoteAddress();
         if (remote == null || remote.getAddress() == null) return null;

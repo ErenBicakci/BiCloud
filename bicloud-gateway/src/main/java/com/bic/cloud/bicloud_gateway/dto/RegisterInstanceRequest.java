@@ -12,9 +12,6 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-/**
- * Instance registration request coming from the control plane to the gateway.
- */
 @Data
 @Builder
 @NoArgsConstructor

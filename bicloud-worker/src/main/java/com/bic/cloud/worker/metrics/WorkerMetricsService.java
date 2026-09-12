@@ -48,31 +48,22 @@ public class WorkerMetricsService {
     }
 
     public long getUsedMemoryMb() {
-        // on Linux getFreeMemorySize() only returns "free" pages and ignores
-        // the disk cache -> usage looks inflated.
-        // reading MemAvailable from /proc/meminfo gives the real available memory.
         long availableKb = readMemAvailableKb();
         if (availableKb >= 0) {
             long totalKb = osBean.getTotalMemorySize() / 1024;
             return (totalKb - availableKb) / 1024;
         }
-        // Fallback (Windows / Mac)
         long total = osBean.getTotalMemorySize();
         long free  = osBean.getFreeMemorySize();
         return (total - free) / (1024 * 1024);
     }
 
-    /**
-     * Reads the MemAvailable value from /proc/meminfo in kB.
-     * Returns -1 on non-Linux systems or on read errors.
-     */
     private long readMemAvailableKb() {
         try {
             java.nio.file.Path path = java.nio.file.Paths.get("/proc/meminfo");
             if (!java.nio.file.Files.exists(path)) return -1;
             for (String line : java.nio.file.Files.readAllLines(path)) {
                 if (line.startsWith("MemAvailable:")) {
-                    // "MemAvailable:    1234567 kB"
                     String[] parts = line.trim().split("\\s+");
                     return Long.parseLong(parts[1]);
                 }

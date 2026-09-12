@@ -12,7 +12,5 @@ import java.util.UUID;
 public class ContainerSnapshotRequest {
     private UUID workerId;
     private List<String> runningContainerIds;
-
-    /** Live CPU/RAM usage of running containers (ones that could not be sampled are absent). */
     private List<ContainerStatsDto> containerStats;
 }

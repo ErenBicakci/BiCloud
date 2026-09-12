@@ -24,10 +24,6 @@ public class AuditController {
     private final AuditEventRepository auditEventRepository;
     private final ProjectService projectService;
 
-    /**
-     * Audit feed. Admins see every event; regular users only see events of
-     * their own projects. Cursor: with beforeId, returns events older than that id.
-     */
     @GetMapping
     public ResponseEntity<List<AuditEventResponse>> feed(
             @RequestParam(required = false) String action,
@@ -39,9 +35,6 @@ public class AuditController {
         return ResponseEntity.ok(query(ownerScope, null, action, beforeId, limit));
     }
 
-    /**
-     * Audit feed of a single project. Caller must be the owner or an admin.
-     */
     @GetMapping("/project/{projectId}")
     public ResponseEntity<List<AuditEventResponse>> projectFeed(
             @PathVariable Long projectId,
@@ -53,7 +46,6 @@ public class AuditController {
         UserProject project = projectService.findById(projectId);
         projectService.assertOwnerOrAdmin(project, caller);
 
-        // access verified; return all events of this project (no ownerScope needed).
         return ResponseEntity.ok(query(null, projectId, action, beforeId, limit));
     }
 
@@ -74,7 +66,7 @@ public class AuditController {
         try {
             return AuditEvent.AuditAction.valueOf(raw.toUpperCase());
         } catch (IllegalArgumentException e) {
-            return null; // unknown filter -> all
+            return null;
         }
     }
 

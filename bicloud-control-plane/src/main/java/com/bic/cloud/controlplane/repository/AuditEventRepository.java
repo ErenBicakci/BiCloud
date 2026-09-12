@@ -12,14 +12,6 @@ import java.util.List;
 @Repository
 public interface AuditEventRepository extends JpaRepository<AuditEvent, Long> {
 
-    /**
-     * Cursor-based (beforeId) paging; all filters are optional/null-aware.
-     *
-     * @param ownerScope null (admin) means all events; otherwise only that owner's projects
-     * @param projectId  restrict to one project (null -> all)
-     * @param action     restrict to one event type (null -> all)
-     * @param beforeId   events with a smaller id (null -> start from newest)
-     */
     @Query("""
         SELECT a FROM AuditEvent a
         WHERE (:beforeId  IS NULL OR a.id < :beforeId)

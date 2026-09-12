@@ -1,5 +1,6 @@
 package com.bic.cloud.controlplane.service;
 
+import com.bic.cloud.controlplane.client.WorkerHttpClient;
 import com.bic.cloud.controlplane.model.ContainerInstance;
 import com.bic.cloud.controlplane.model.ProjectImage;
 import com.bic.cloud.controlplane.model.UserProject;
@@ -42,6 +43,9 @@ class ContainerReconciliationServiceTest {
     private GatewayNotificationService gatewayNotificationService;
 
     @Mock
+    private WorkerHttpClient workerHttpClient;
+
+    @Mock
     private AuditService auditService;
 
     @InjectMocks
@@ -80,9 +84,6 @@ class ContainerReconciliationServiceTest {
     @Test
     @DisplayName("reconcile -> a RUNNING record younger than 60s is not FAILED even if missing from the snapshot (grace period)")
     void reconcile_skipsRecentInstancesWithinGracePeriod() {
-        // Regression: stats collection used to delay the snapshot, so freshly
-        // deployed containers were missing from the stale list and got treated
-        // as zombies, kicking off a restart storm.
         ContainerInstance fresh = buildInstance("brand-new-container",
                 ContainerInstance.InstanceStatus.RUNNING, Instant.now().minusSeconds(5));
 
@@ -98,9 +99,6 @@ class ContainerReconciliationServiceTest {
     @Test
     @DisplayName("reconcile -> a record FAILED in the DB but running per the snapshot is recovered to RUNNING and re-registered with the gateway")
     void reconcile_recoversFalseFailedContainer() {
-        // Regression: when clock skew made a worker briefly OFFLINE, its live
-        // containers were marked FAILED and stayed FAILED after it came back
-        // ACTIVE, causing self-healing to spawn duplicates.
         ContainerInstance falseFailed = buildInstance("alive-container-id",
                 ContainerInstance.InstanceStatus.FAILED, Instant.now().minusSeconds(600));
 
@@ -150,9 +148,78 @@ class ContainerReconciliationServiceTest {
         verify(containerInstanceRepository, never()).save(any());
     }
 
-    // ──────────────────────────────────────────────────────────────
-    // Helpers
-    // ──────────────────────────────────────────────────────────────
+    @Test
+    @DisplayName("reconcile -> STOPPING container confirmed gone in snapshot is marked STOPPED")
+    void reconcile_stoppingContainerConfirmedGone_markedStopped() {
+        ContainerInstance stopping = buildInstance("stopping-container-id",
+                ContainerInstance.InstanceStatus.STOPPING, Instant.now().minusSeconds(100));
+
+        when(containerInstanceRepository.findByWorkerNode_IdAndStatus(
+                worker.getId(), ContainerInstance.InstanceStatus.FAILED))
+                .thenReturn(List.of());
+        when(containerInstanceRepository.findByWorkerNode_IdAndStatus(
+                worker.getId(), ContainerInstance.InstanceStatus.STOPPING))
+                .thenReturn(List.of(stopping));
+        when(containerInstanceRepository.findByWorkerNode_IdAndStatus(
+                worker.getId(), ContainerInstance.InstanceStatus.STOPPED))
+                .thenReturn(List.of());
+        when(containerInstanceRepository.findRunningByWorkerNodeId(worker.getId()))
+                .thenReturn(List.of());
+
+        reconciliationService.reconcile(worker.getId(), List.of("other-container"));
+
+        assertThat(stopping.getStatus()).isEqualTo(ContainerInstance.InstanceStatus.STOPPED);
+        verify(containerInstanceRepository).save(stopping);
+        verify(workerHttpClient, never()).stopAndRemoveContainer(any(), any());
+    }
+
+    @Test
+    @DisplayName("reconcile -> STOPPING container still running in snapshot retries stopAndRemoveContainer")
+    void reconcile_stoppingContainerStillPresent_retriesStopAndRemove() {
+        ContainerInstance stuckStopping = buildInstance("stuck-container-id",
+                ContainerInstance.InstanceStatus.STOPPING, Instant.now().minusSeconds(100));
+
+        when(containerInstanceRepository.findByWorkerNode_IdAndStatus(
+                worker.getId(), ContainerInstance.InstanceStatus.FAILED))
+                .thenReturn(List.of());
+        when(containerInstanceRepository.findByWorkerNode_IdAndStatus(
+                worker.getId(), ContainerInstance.InstanceStatus.STOPPING))
+                .thenReturn(List.of(stuckStopping));
+        when(containerInstanceRepository.findByWorkerNode_IdAndStatus(
+                worker.getId(), ContainerInstance.InstanceStatus.STOPPED))
+                .thenReturn(List.of());
+        when(containerInstanceRepository.findRunningByWorkerNodeId(worker.getId()))
+                .thenReturn(List.of());
+
+        reconciliationService.reconcile(worker.getId(), List.of("stuck-container-id"));
+
+        assertThat(stuckStopping.getStatus()).isEqualTo(ContainerInstance.InstanceStatus.STOPPING);
+        verify(workerHttpClient).stopAndRemoveContainer(worker, "stuck-container-id");
+    }
+
+    @Test
+    @DisplayName("reconcile -> STOPPED container still running in snapshot is killed as zombie and deregistered")
+    void reconcile_stoppedContainerStillPresent_stopsZombieAndDeregisters() {
+        ContainerInstance zombieStopped = buildInstance("zombie-stopped-id",
+                ContainerInstance.InstanceStatus.STOPPED, Instant.now().minusSeconds(200));
+
+        when(containerInstanceRepository.findByWorkerNode_IdAndStatus(
+                worker.getId(), ContainerInstance.InstanceStatus.FAILED))
+                .thenReturn(List.of());
+        when(containerInstanceRepository.findByWorkerNode_IdAndStatus(
+                worker.getId(), ContainerInstance.InstanceStatus.STOPPING))
+                .thenReturn(List.of());
+        when(containerInstanceRepository.findByWorkerNode_IdAndStatus(
+                worker.getId(), ContainerInstance.InstanceStatus.STOPPED))
+                .thenReturn(List.of(zombieStopped));
+        when(containerInstanceRepository.findRunningByWorkerNodeId(worker.getId()))
+                .thenReturn(List.of());
+
+        reconciliationService.reconcile(worker.getId(), List.of("zombie-stopped-id"));
+
+        verify(gatewayNotificationService).deregister(zombieStopped);
+        verify(workerHttpClient).stopAndRemoveContainer(worker, "zombie-stopped-id");
+    }
 
     private ContainerInstance buildInstance(String dockerId,
                                             ContainerInstance.InstanceStatus status,
@@ -175,7 +242,6 @@ class ContainerReconciliationServiceTest {
                 .status(status)
                 .build();
 
-        // createdAt is set by @PrePersist; tests set it via reflection
         setCreatedAt(instance, createdAt);
         return instance;
     }

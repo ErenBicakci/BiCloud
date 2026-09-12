@@ -65,11 +65,8 @@ public class WorkerStartup {
 
         log.info("Worker shutting down gracefully (workerId={}).", workerId);
 
-        // 1) stop all Docker containers owned by this worker.
         gracefulShutdownService.stopAllManagedContainers();
 
-        // 2) send deregister to the control plane - the containers are down,
-        //    so the CP can mark their records STOPPED as well.
         WorkerHeartbeatRequest deregisterRequest = WorkerHeartbeatRequest.builder()
                 .workerId(workerId)
                 .cpuUsagePercent(0)

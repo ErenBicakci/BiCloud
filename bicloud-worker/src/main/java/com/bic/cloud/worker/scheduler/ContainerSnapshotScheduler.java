@@ -36,17 +36,12 @@ public class ContainerSnapshotScheduler {
         }
 
         try {
-            // 1) stats collection: blocks ~1-2s per container (the daemon takes
-            //    two samples). Hence the ID list is refreshed AFTER stats;
-            //    otherwise the stale list makes CP reconcile treat new containers
-            //    as zombies and self-healing enters an endless restart loop.
             List<ContainerStatsDto> stats = dockerContainerService.listManagedRunningContainers().stream()
                     .map(Container::getId)
                     .map(statsCollector::collect)
                     .filter(java.util.Objects::nonNull)
                     .toList();
 
-            // 2) FRESH list for reconcile - taken right before sending
             List<String> runningIds = dockerContainerService.listManagedRunningContainers().stream()
                     .map(Container::getId)
                     .toList();

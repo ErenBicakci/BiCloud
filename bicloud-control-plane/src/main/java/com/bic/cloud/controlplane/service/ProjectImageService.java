@@ -56,8 +56,6 @@ public class ProjectImageService {
                 dto.getTargetCpuPercent(),
                 dto.getScaleDownCpuPercent());
 
-        // route key is projectName:serviceName -> unique within the project.
-        // The DB constraint is the backstop; this check produces the friendly 409.
         if (projectImageRepository.existsByProject_IdAndServiceName(project.getId(), dto.getServiceName())) {
             throw NameConflictException.serviceName(dto.getServiceName());
         }
@@ -88,7 +86,7 @@ public class ProjectImageService {
 
         auditService.userAction(caller, AuditEvent.AuditAction.SERVICE_CREATED,
                 AuditEvent.TargetType.SERVICE, saved.getServiceName(), project,
-                "Service added (image=" + saved.getImageName() + ", " + saved.getDesiredReplicas() + " replika)"
+                "Service added (image=" + saved.getImageName() + ", " + saved.getDesiredReplicas() + " replicas)"
                         + (saved.isAllowInternet() ? " - internet egress ENABLED by admin" : "")
                         + (saved.isExposeExternally() ? " - external gateway exposure ENABLED" : ""));
 
@@ -113,11 +111,6 @@ public class ProjectImageService {
                 .build();
     }
 
-    /**
-     * Egress is a hard admin-only capability: containers live on internal
-     * project networks by default; internet access is granted per service
-     * and only by an admin.
-     */
     public static void assertCanSetAllowInternet(boolean requested, BicloudUserDetails caller) {
         if (!requested) {
             return;
@@ -130,10 +123,10 @@ public class ProjectImageService {
     }
 
     public static void assertAutoscalingPolicy(boolean enabled,
-                                               int minReplicas,
-                                               int maxReplicas,
-                                               int targetCpuPercent,
-                                               int scaleDownCpuPercent) {
+                                                int minReplicas,
+                                                int maxReplicas,
+                                                int targetCpuPercent,
+                                                int scaleDownCpuPercent) {
         if (minReplicas > maxReplicas) {
             throw new InvalidAutoscalingPolicyException(
                     "minReplicas must be less than or equal to maxReplicas.");
@@ -148,11 +141,6 @@ public class ProjectImageService {
         }
     }
 
-    /**
-     * Manually clears the self-healing backoff cooldown.
-     * The operator calls this after fixing a broken image/env;
-     * SelfHealingScheduler puts the service back on the retry list.
-     */
     @Transactional
     public void resetDeployFailures(Long imageId, BicloudUserDetails caller) {
         ProjectImage image = findByIdWithProject(imageId);

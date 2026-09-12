@@ -49,22 +49,17 @@ public class SecurityConfig {
                                         "FORBIDDEN", "You do not have permission to access this resource"))
                 )
                 .authorizeHttpRequests(auth -> auth
-                        // Public auth surface: keep this list explicit. Never expose all /auth/**.
                         .requestMatchers(HttpMethod.POST, "/auth/register", "/auth/login").permitAll()
                         .requestMatchers(HttpMethod.POST, "/auth/admin/register").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/auth/me").authenticated()
                         .requestMatchers("/auth/**").denyAll()
-                        // Public monitoring is limited to non-sensitive readiness/info endpoints.
                         .requestMatchers(HttpMethod.GET,
                                 "/actuator/health",
                                 "/actuator/health/**",
                                 "/actuator/info").permitAll()
                         .requestMatchers("/actuator/**").hasRole("ADMIN")
-                        // Worker-internal: already protected by ApiKeyAuthFilter
                         .requestMatchers("/api/workers/**").permitAll()
-                        // admin-only: user management
                         .requestMatchers("/admin/**").hasRole("ADMIN")
-                        // everything else requires a JWT (/project/**, /containers/**, /route/**)
                         .anyRequest().authenticated()
                 )
                 .authenticationProvider(authenticationProvider())

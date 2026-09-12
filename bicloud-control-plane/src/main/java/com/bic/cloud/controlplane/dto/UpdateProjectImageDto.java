@@ -5,11 +5,6 @@ import lombok.Data;
 
 import java.util.Map;
 
-/**
- * Configuration update for an existing service (ProjectImage).
- * serviceName is immutable: mesh/gateway routes and Docker aliases are
- * bound to it. The replica count is managed via the scale endpoint.
- */
 @Data
 public class UpdateProjectImageDto {
 
@@ -71,9 +66,6 @@ public class UpdateProjectImageDto {
     @Max(value = 3600, message = "scaleDownCooldownSeconds may be at most 3600.")
     private Integer scaleDownCooldownSeconds;
 
-    /** Egress opt-in; only admins may change it (checked in the service layer). */
     private boolean allowInternet;
-
-    /** Ingress opt-in: whether this service accepts external host-based gateway traffic. */
     private boolean exposeExternally;
 }

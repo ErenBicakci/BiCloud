@@ -21,6 +21,7 @@ public class WorkerContainerCreateRequest {
 
     private Integer memoryLimitMb;
 
-    /** When true the worker also attaches the container to the egress bridge. */
+    private String instanceId;
+
     private boolean allowInternet;
 }

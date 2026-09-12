@@ -11,12 +11,6 @@ import reactor.core.publisher.Mono;
 import java.time.Duration;
 import java.util.List;
 
-/**
- * Control-plane service discovery for mesh routing.
- *
- * When a request targets a service missing from its own RouteRegistry (i.e.
- * running on another machine), the gateway asks the CP for the target worker gateway.
- */
 @Slf4j
 @Component
 public class ControlPlaneDiscoveryClient {
@@ -26,8 +20,6 @@ public class ControlPlaneDiscoveryClient {
     @Value("${bicloud.control-plane.url}")
     private String controlPlaneUrl;
 
-    // the CP's /api/workers/** endpoints are protected with the api key.
-    // deliberately no default, missing config should fail at startup.
     @Value("${bicloud.control-plane.api-key}")
     private String apiKey;
 
@@ -41,10 +33,6 @@ public class ControlPlaneDiscoveryClient {
                 .build();
     }
 
-    /**
-     * Returns all RUNNING endpoints for the given project/service.
-     * Returns an empty list when the CP is unreachable (mesh yields 503, gateway stays up).
-     */
     public Mono<List<MeshEndpointDto>> discover(String projectName, String serviceName) {
         return webClient.get()
                 .uri("/api/workers/discover/{p}/{s}", projectName, serviceName)
@@ -59,10 +47,6 @@ public class ControlPlaneDiscoveryClient {
                 });
     }
 
-    /**
-     * Asks the CP to re-announce the RUNNING instances in the DB to the gateways.
-     * Refills the in-memory registry after a gateway restart without restarting the CP.
-     */
     public Mono<Void> requestResync() {
         return webClient.post()
                 .uri("/api/workers/gateway-resync")
