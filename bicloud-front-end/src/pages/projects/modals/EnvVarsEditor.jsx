@@ -1,11 +1,12 @@
 import React, { useState, forwardRef, useImperativeHandle } from 'react';
 import { Button } from '../../../components/ui';
-import { ClipboardList, List, PenLine, Plus, Trash2 } from 'lucide-react';
+import { Check, ClipboardList, Copy, Download, List, PenLine, Plus, Trash2 } from 'lucide-react';
 
 export const EnvVarsEditor = forwardRef(function EnvVarsEditor({ envVars, setEnvVars }, ref) {
   const [envMode, setEnvMode] = useState('single');
   const [bulkText, setBulkText] = useState('');
   const [bulkError, setBulkError] = useState('');
+  const [copied, setCopied] = useState(false);
 
   const addEnvVar = () => setEnvVars(prev => [...prev, { key: '', value: '' }]);
   const removeEnvVar = (index) => setEnvVars(prev => prev.filter((_, i) => i !== index));
@@ -13,9 +14,8 @@ export const EnvVarsEditor = forwardRef(function EnvVarsEditor({ envVars, setEnv
     setEnvVars(prev => prev.map((item, i) => i === index ? { ...item, [field]: val } : item));
   };
 
-  const syncBulkToRows = () => {
-    setBulkError('');
-    const lines = bulkText.split('\n');
+  const parseBulkText = (text) => {
+    const lines = text.split('\n');
     const parsed = [];
     const seen = new Set();
 
@@ -26,33 +26,44 @@ export const EnvVarsEditor = forwardRef(function EnvVarsEditor({ envVars, setEnv
 
       const eqIdx = trimmed.indexOf('=');
       if (eqIdx === -1) {
-        setBulkError(`Line ${i + 1}: missing "=" in "${raw}"`);
-        return null;
+        throw new Error(`Line ${i + 1}: missing "=" delimiter in "${raw}"`);
       }
 
-      const key = trimmed.slice(0, eqIdx).trim();
-      const value = trimmed.slice(eqIdx + 1);
+      let key = trimmed.slice(0, eqIdx).trim();
+      let value = trimmed.slice(eqIdx + 1).trim();
+
+      // Strip matching wrapping quotes
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
 
       if (!key) {
-        setBulkError(`Line ${i + 1}: key cannot be empty.`);
-        return null;
+        throw new Error(`Line ${i + 1}: variable key cannot be empty.`);
       }
       if (key.startsWith('BICLOUD_')) {
-        setBulkError(`Line ${i + 1}: the "BICLOUD_" prefix is reserved by the system.`);
-        return null;
+        throw new Error(`Line ${i + 1}: the "BICLOUD_" prefix is reserved by the platform.`);
       }
       if (seen.has(key)) {
-        setBulkError(`Key "${key}" has been entered more than once.`);
-        return null;
+        throw new Error(`Duplicate key "${key}" found at line ${i + 1}.`);
       }
       seen.add(key);
       parsed.push({ key, value });
     }
-
-    setEnvVars(parsed);
-    setEnvMode('single');
-    setBulkText('');
     return parsed;
+  };
+
+  const syncBulkToRows = () => {
+    setBulkError('');
+    try {
+      const parsed = parseBulkText(bulkText);
+      setEnvVars(parsed);
+      setEnvMode('single');
+      setBulkText('');
+      return parsed;
+    } catch (err) {
+      setBulkError(err.message);
+      return null;
+    }
   };
 
   useImperativeHandle(ref, () => ({
@@ -67,6 +78,21 @@ export const EnvVarsEditor = forwardRef(function EnvVarsEditor({ envVars, setEnv
     setBulkText(text);
     setBulkError('');
     setEnvMode('bulk');
+  };
+
+  const copyAsEnv = () => {
+    let text;
+    if (envMode === 'bulk') {
+      text = bulkText;
+    } else {
+      text = envVars
+        .filter(e => e.key.trim())
+        .map(e => `${e.key}=${e.value}`)
+        .join('\n');
+    }
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   };
 
   const filledCount = envVars.filter(e => e.key.trim()).length;
@@ -86,6 +112,7 @@ export const EnvVarsEditor = forwardRef(function EnvVarsEditor({ envVars, setEnv
               type="button"
               className={envMode === 'single' ? 'active' : ''}
               onClick={() => envMode === 'bulk' && syncBulkToRows()}
+              title="Form row editor"
             >
               <PenLine size={12} /> Rows
             </button>
@@ -93,13 +120,25 @@ export const EnvVarsEditor = forwardRef(function EnvVarsEditor({ envVars, setEnv
               type="button"
               className={envMode === 'bulk' ? 'active' : ''}
               onClick={envMode === 'single' ? switchToBulk : undefined}
+              title="Bulk raw text editor (.env)"
             >
-              <List size={12} /> Bulk
+              <List size={12} /> .env (Bulk)
             </button>
           </div>
+
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={copyAsEnv}
+            title="Copy all variables as .env text"
+          >
+            {copied ? <Check size={13} color="var(--accent-green)" /> : <Copy size={13} />}
+            {copied ? 'Copied' : 'Copy .env'}
+          </button>
+
           {envMode === 'single' && (
             <Button variant="ghost" size="sm" type="button" icon={Plus} onClick={addEnvVar}>
-              Add
+              Add Row
             </Button>
           )}
         </div>
@@ -113,7 +152,7 @@ export const EnvVarsEditor = forwardRef(function EnvVarsEditor({ envVars, setEnv
               setBulkText(e.target.value);
               setBulkError('');
             }}
-            placeholder={'KEY=value\nREDIS_URL=redis://cache:6379\n# blank lines and comments are ignored'}
+            placeholder={'# Paste .env variables below:\nDATABASE_URL=postgres://user:pass@host:5432/db\nAPI_KEY=secret_key_123\nPORT=8080'}
             rows={8}
             className="input mono"
             style={{
@@ -134,7 +173,7 @@ export const EnvVarsEditor = forwardRef(function EnvVarsEditor({ envVars, setEnv
         <>
           {envVars.length === 0 && (
             <div className="env-empty">
-              No environment variables
+              No environment variables defined yet. Click "Add Row" or switch to ".env (Bulk)".
             </div>
           )}
 
@@ -144,13 +183,13 @@ export const EnvVarsEditor = forwardRef(function EnvVarsEditor({ envVars, setEnv
                 <div key={i} className="env-row">
                   <input
                     className="input mono"
-                    placeholder="KEY"
+                    placeholder="KEY (e.g. PORT)"
                     value={ev.key}
                     onChange={e => handleEnvChange(i, 'key', e.target.value)}
                   />
                   <input
                     className="input mono"
-                    placeholder="value"
+                    placeholder="value (e.g. 8080)"
                     value={ev.value}
                     onChange={e => handleEnvChange(i, 'value', e.target.value)}
                   />
@@ -158,7 +197,8 @@ export const EnvVarsEditor = forwardRef(function EnvVarsEditor({ envVars, setEnv
                     type="button"
                     onClick={() => removeEnvVar(i)}
                     className="btn-icon"
-                    title="Remove"
+                    title="Remove variable"
+                    aria-label="Remove variable"
                   >
                     <Trash2 size={15} />
                   </button>
@@ -171,3 +211,4 @@ export const EnvVarsEditor = forwardRef(function EnvVarsEditor({ envVars, setEnv
     </div>
   );
 });
+

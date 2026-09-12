@@ -66,7 +66,7 @@ export default function WorkerDetailPage() {
     : (heartbeatAgeMs > 60000 ? 'var(--accent-red)' : 'var(--accent-green)');
 
   return (
-    <div style={{ padding: '32px', maxWidth: 1100, margin: '0 auto' }}>
+    <div className="page">
 
       {/* Breadcrumb */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 20 }}>

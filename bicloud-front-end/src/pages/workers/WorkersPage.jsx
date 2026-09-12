@@ -1,24 +1,34 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { workerService } from '../../services/worker.service';
+import { projectService } from '../../services/project.service';
 import { extractError } from '../../utils/common';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
 import { Badge, Button, Spinner } from '../../components/ui';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
+import { ClusterTopologyMap } from '../../components/ui/ClusterTopologyMap';
 import {
   Activity,
   Box,
   Clock,
   Cpu,
+  Filter,
+  Grid,
   Hash,
+  Layers,
+  LayoutGrid,
   MemoryStick,
   Network,
+  Radio,
   RefreshCw,
+  Search,
   Server,
   ShieldCheck,
   Star,
   WifiOff,
   Wrench,
+  X,
 } from 'lucide-react';
 
 export default function WorkersPage() {
@@ -26,15 +36,24 @@ export default function WorkersPage() {
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
   const [workers, setWorkers] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [viewMode, setViewMode] = useState('cards'); // 'cards' | 'topology'
+  const [statusFilter, setStatusFilter] = useState('ALL'); // 'ALL' | 'ACTIVE' | 'MAINTENANCE' | 'OFFLINE'
+  const [searchQuery, setSearchQuery] = useState('');
+  const [confirmDrain, setConfirmDrain] = useState(null);
   const [now, setNow] = useState(() => Date.now());
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     try {
-      const { data } = await workerService.list();
-      setWorkers(data || []);
+      const [wRes, pRes] = await Promise.all([
+        workerService.list(),
+        projectService.list(),
+      ]);
+      setWorkers(wRes.data || []);
+      setProjects(pRes.data || []);
     } catch (err) {
       error(extractError(err));
     } finally {
@@ -65,16 +84,37 @@ export default function WorkersPage() {
     try {
       await workerService.setMaintenance(worker.workerId, enable);
       success(enable
-        ? `"${worker.workerName}" entered maintenance. New workloads will not be scheduled there.`
-        : `"${worker.workerName}" left maintenance.`);
+        ? `Worker "${worker.workerName}" is now in Maintenance (drained from new allocations).`
+        : `Worker "${worker.workerName}" returned to ACTIVE status.`);
       load(true);
+      setConfirmDrain(null);
     } catch (err) {
       error(extractError(err));
     }
   };
 
+  const filteredWorkers = useMemo(() => {
+    return workers.filter(w => {
+      const matchesStatus =
+        statusFilter === 'ALL' ||
+        (statusFilter === 'ACTIVE' && w.status === 'ACTIVE') ||
+        (statusFilter === 'MAINTENANCE' && w.status === 'MAINTENANCE') ||
+        (statusFilter === 'OFFLINE' && w.status !== 'ACTIVE' && w.status !== 'MAINTENANCE');
+
+      const q = searchQuery.toLowerCase().trim();
+      const matchesSearch =
+        !q ||
+        w.workerName.toLowerCase().includes(q) ||
+        w.ipAddress?.includes(q) ||
+        w.workerVersion?.toLowerCase().includes(q);
+
+      return matchesStatus && matchesSearch;
+    });
+  }, [workers, statusFilter, searchQuery]);
+
   const activeCount = workers.filter(w => w.status === 'ACTIVE').length;
   const maintenanceCount = workers.filter(w => w.status === 'MAINTENANCE').length;
+  const offlineCount = workers.length - activeCount - maintenanceCount;
   const runningContainers = workers.reduce((s, w) => s + (w.runningContainers || 0), 0);
   const totalCpu = workers.reduce((s, w) => s + (w.totalCpuCores || 0), 0);
   const totalMemory = workers.reduce((s, w) => s + (w.totalMemoryMb || 0), 0);
@@ -92,6 +132,23 @@ export default function WorkersPage() {
           </p>
         </div>
         <div className="page-actions">
+          <div className="segmented" aria-label="View Mode">
+            <button
+              type="button"
+              className={viewMode === 'cards' ? 'active' : ''}
+              onClick={() => setViewMode('cards')}
+            >
+              <LayoutGrid size={13} /> Cards
+            </button>
+            <button
+              type="button"
+              className={viewMode === 'topology' ? 'active' : ''}
+              onClick={() => setViewMode('topology')}
+            >
+              <Radio size={13} /> Topology Map
+            </button>
+          </div>
+
           <Badge variant="blue">
             <span className="health-dot running" style={{ width: 6, height: 6 }} />
             Live
@@ -103,44 +160,125 @@ export default function WorkersPage() {
       </header>
 
       <section className="console-grid metrics worker-summary">
-        <MetricTile label="Workers" value={workers.length} note={`${activeCount} active`} icon={Server} />
+        <MetricTile label="Workers" value={workers.length} note={`${activeCount} active, ${maintenanceCount} maintenance`} icon={Server} />
         <MetricTile label="Fleet CPU" value={totalCpu} note="registered cores" icon={Cpu} />
         <MetricTile label="Fleet Memory" value={formatMemory(totalMemory)} note="registered capacity" icon={MemoryStick} />
-        <MetricTile label="Containers" value={runningContainers} note={`${maintenanceCount} workers in maintenance`} icon={Box} />
+        <MetricTile label="Containers" value={runningContainers} note={`${runningContainers} active across fleet`} icon={Box} />
       </section>
 
-      <section className="worker-inventory">
-        <div className="worker-inventory-head">
-          <div>
-            <div className="panel-title"><Server size={16} /> Node inventory</div>
-            <div className="panel-subtitle">{workers.length} registered worker nodes</div>
-          </div>
-          <div className="status-strip">
-            <Clock size={14} />
-            Auto-refresh every 15 seconds
-          </div>
-        </div>
+      {viewMode === 'topology' ? (
+        <section style={{ marginTop: 24 }}>
+          <ClusterTopologyMap workers={workers} projects={projects} />
+        </section>
+      ) : (
+        <section className="worker-inventory">
+          <div className="worker-inventory-head">
+            <div>
+              <div className="panel-title"><Server size={16} /> Node inventory</div>
+              <div className="panel-subtitle">{workers.length} registered worker nodes</div>
+            </div>
 
-        {workers.length === 0 ? (
-          <div className="empty-state">
-            <WifiOff size={42} />
-            <p>No registered worker nodes found.</p>
+            {/* Filter toolbar */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <div className="log-search-wrap">
+                <Search size={13} className="log-search-icon" />
+                <input
+                  type="text"
+                  placeholder="Filter nodes..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="input input-sm log-search-input"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    className="btn-icon log-search-clear"
+                    onClick={() => setSearchQuery('')}
+                    aria-label="Clear filter"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+
+              <div className="segmented">
+                <button
+                  type="button"
+                  className={statusFilter === 'ALL' ? 'active' : ''}
+                  onClick={() => setStatusFilter('ALL')}
+                >
+                  All ({workers.length})
+                </button>
+                <button
+                  type="button"
+                  className={statusFilter === 'ACTIVE' ? 'active' : ''}
+                  onClick={() => setStatusFilter('ACTIVE')}
+                >
+                  Active ({activeCount})
+                </button>
+                <button
+                  type="button"
+                  className={statusFilter === 'MAINTENANCE' ? 'active' : ''}
+                  onClick={() => setStatusFilter('MAINTENANCE')}
+                >
+                  Maintenance ({maintenanceCount})
+                </button>
+                {offlineCount > 0 && (
+                  <button
+                    type="button"
+                    className={statusFilter === 'OFFLINE' ? 'active' : ''}
+                    onClick={() => setStatusFilter('OFFLINE')}
+                  >
+                    Offline ({offlineCount})
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
-        ) : (
-          <div className="worker-card-list">
-            {workers.map(w => (
-              <WorkerCard
-                key={w.workerId}
-                worker={w}
-                now={now}
-                isAdmin={isAdmin}
-                onToggleMaintenance={() => handleToggleMaintenance(w)}
-                onOpen={() => navigate(`/admin/workers/${w.workerId}`)}
-              />
-            ))}
-          </div>
-        )}
-      </section>
+
+          {filteredWorkers.length === 0 ? (
+            <div className="empty-state">
+              <WifiOff size={42} />
+              <p>No worker nodes matching current filter.</p>
+            </div>
+          ) : (
+            <div className="worker-card-list">
+              {filteredWorkers.map(w => (
+                <WorkerCard
+                  key={w.workerId}
+                  worker={w}
+                  now={now}
+                  isAdmin={isAdmin}
+                  onToggleMaintenance={() => {
+                    if (w.status !== 'MAINTENANCE') {
+                      setConfirmDrain({
+                        worker: w,
+                        title: `Drain Worker: ${w.workerName}`,
+                        message: `Putting "${w.workerName}" in Maintenance stops new container allocations from being scheduled on this machine. Existing containers will finish or can be migrated.`,
+                      });
+                    } else {
+                      handleToggleMaintenance(w);
+                    }
+                  }}
+                  onOpen={() => navigate(`/admin/workers/${w.workerId}`)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Confirmation Modal for Draining */}
+      {confirmDrain && (
+        <ConfirmModal
+          isOpen
+          title={confirmDrain.title}
+          message={confirmDrain.message}
+          confirmLabel="Enable Maintenance (Drain)"
+          onConfirm={() => handleToggleMaintenance(confirmDrain.worker)}
+          onCancel={() => setConfirmDrain(null)}
+        />
+      )}
     </div>
   );
 }

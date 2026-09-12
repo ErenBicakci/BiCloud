@@ -87,25 +87,22 @@ export default function AdminOverviewPage() {
   if (loading) return <div className="page-loader"><Spinner size="lg" /></div>;
 
   return (
-    <div style={{ padding: '32px', maxWidth: 1300 }}>
+    <div className="page">
 
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 36 }}>
+      <header className="page-header">
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-            <div style={{ padding: '6px 10px', background: 'rgba(163,113,247,.12)', border: '1px solid rgba(163,113,247,.25)', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Activity size={14} style={{ color: 'var(--accent-purple)' }} />
-              <span style={{ fontSize: '.7rem', fontWeight: 700, color: 'var(--accent-purple)', textTransform: 'uppercase', letterSpacing: '.08em' }}>System Management</span>
-            </div>
+          <div className="page-kicker">
+            <Activity size={14} style={{ color: 'var(--accent-purple)' }} /> System Management
           </div>
-          <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: 6, letterSpacing: '-.02em' }}>
+          <h1 className="page-title">
             System Overview
           </h1>
-          <p style={{ color: 'var(--text-muted)', fontSize: '.9rem' }}>
+          <p className="page-subtitle">
             All platform resources and infrastructure status.
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div className="page-actions">
           <button
             className="btn btn-ghost btn-sm"
             onClick={handleResync}
@@ -126,20 +123,20 @@ export default function AdminOverviewPage() {
             Refresh
           </button>
         </div>
-      </div>
+      </header>
 
       {/* System Stats */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
         gap: 16,
-        marginBottom: 32,
+        marginBottom: 24,
       }}>
         {stats.map(s => <AdminStatCard key={s.label} {...s} />)}
       </div>
 
       {/* Worker Health + Projects Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 24, marginBottom: 24 }}>
 
         {/* Worker Health */}
         <Card style={{ padding: 0, overflow: 'hidden' }}>
