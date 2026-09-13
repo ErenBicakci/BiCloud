@@ -4,12 +4,12 @@ import com.bic.cloud.controlplane.dto.UserResponse;
 import com.bic.cloud.controlplane.exception.IllegalUserOperationException;
 import com.bic.cloud.controlplane.exception.InvalidRoleException;
 import com.bic.cloud.controlplane.exception.UserHasProjectsException;
+import com.bic.cloud.controlplane.exception.UserNotFoundException;
 import com.bic.cloud.controlplane.model.BicloudUser;
 import com.bic.cloud.controlplane.repository.BicloudUserRepository;
 import com.bic.cloud.controlplane.repository.UserProjectRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -97,7 +97,7 @@ public class UserAdminService {
 
     private BicloudUser findOrThrow(UUID userId) {
         return userRepository.findById(userId)
-                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + userId));
+                .orElseThrow(() -> new UserNotFoundException(userId));
     }
 
     private UserResponse toResponse(BicloudUser user) {

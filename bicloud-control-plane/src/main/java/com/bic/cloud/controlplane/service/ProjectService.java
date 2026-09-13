@@ -6,6 +6,7 @@ import com.bic.cloud.controlplane.dto.ProjectDetailResponse;
 import com.bic.cloud.controlplane.exception.ForbiddenException;
 import com.bic.cloud.controlplane.exception.NameConflictException;
 import com.bic.cloud.controlplane.exception.ProjectNotFoundException;
+import com.bic.cloud.controlplane.exception.UserNotFoundException;
 import com.bic.cloud.controlplane.model.AuditEvent;
 import com.bic.cloud.controlplane.model.BicloudUser;
 import com.bic.cloud.controlplane.model.ContainerInstance;
@@ -18,7 +19,6 @@ import com.bic.cloud.controlplane.repository.UserProjectRepository;
 import com.bic.cloud.controlplane.security.BicloudUserDetails;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,7 +42,7 @@ public class ProjectService {
     public CreateProjectResponse createProject(CreateProjectDto dto, BicloudUserDetails caller) {
 
         BicloudUser owner = userRepository.findById(caller.getId())
-                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+                .orElseThrow(() -> new UserNotFoundException(caller.getId()));
 
         if (userProjectRepository.existsByName(dto.getName())) {
             throw NameConflictException.projectName(dto.getName());

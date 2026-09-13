@@ -21,6 +21,8 @@ import { extractError } from '../../utils/common';
 import { Button, Input } from '../../components/ui';
 
 const REGISTER_PASSWORD_MIN_LENGTH = 8;
+// BCrypt on the control plane only accepts passwords up to 72 bytes
+const REGISTER_PASSWORD_MAX_BYTES = 72;
 
 const LoginPage = () => {
   const { login } = useAuth();
@@ -43,6 +45,9 @@ const LoginPage = () => {
     if (!form.password) return 'Password is required.';
     if (!isLogin && form.password.length < REGISTER_PASSWORD_MIN_LENGTH) {
       return `Password must be at least ${REGISTER_PASSWORD_MIN_LENGTH} characters.`;
+    }
+    if (!isLogin && new TextEncoder().encode(form.password).length > REGISTER_PASSWORD_MAX_BYTES) {
+      return `Password must be at most ${REGISTER_PASSWORD_MAX_BYTES} bytes.`;
     }
     return null;
   };

@@ -5,6 +5,7 @@ import com.bic.cloud.controlplane.dto.auth.AuthResponse;
 import com.bic.cloud.controlplane.dto.auth.LoginRequest;
 import com.bic.cloud.controlplane.dto.auth.RegisterRequest;
 import com.bic.cloud.controlplane.exception.UserAlreadyExistsException;
+import com.bic.cloud.controlplane.exception.UserNotFoundException;
 import com.bic.cloud.controlplane.model.BicloudUser;
 import com.bic.cloud.controlplane.repository.BicloudUserRepository;
 import com.bic.cloud.controlplane.security.BicloudUserDetails;
@@ -12,6 +13,7 @@ import com.bic.cloud.controlplane.security.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -36,11 +38,16 @@ public class AuthService {
     }
 
     public AuthResponse login(LoginRequest request) {
+        // BCrypt ignores bytes past 72 when matching; never let such a password match by prefix
+        if (RegisterRequest.exceedsPasswordLimit(request.password())) {
+            throw new BadCredentialsException("Bad credentials");
+        }
+
         authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.username(), request.password()));
 
         BicloudUser user = userRepository.findByUsername(request.username())
-                .orElseThrow();
+                .orElseThrow(() -> new UserNotFoundException(request.username()));
 
         String token = jwtUtil.generateToken(user.getUsername(), user.getRole(), user.getId());
         log.info("User logged in: {}", request.username());
@@ -54,7 +61,7 @@ public class AuthService {
         }
 
         BicloudUser user = userRepository.findById(caller.getId())
-                .orElseThrow();
+                .orElseThrow(() -> new UserNotFoundException(caller.getId()));
         return new UserResponse(user.getId(), user.getUsername(), user.getRole(), user.getCreatedAt());
     }
 
