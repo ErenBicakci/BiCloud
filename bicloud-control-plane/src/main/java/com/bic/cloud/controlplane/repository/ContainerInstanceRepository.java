@@ -7,10 +7,13 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -165,4 +168,38 @@ public interface ContainerInstanceRepository extends JpaRepository<ContainerInst
             @Param("projectId") Long projectId,
             @Param("serviceName") String serviceName,
             @Param("search") String search);
+
+    // Conditional transitions: a deploy thread may hold a reservation for minutes
+    // while the worker pulls the image, and scale-down, self-healing or a delete can
+    // take the record over in the meantime. These only succeed if nobody did.
+
+    @Transactional
+    @Modifying
+    @Query("""
+        UPDATE ContainerInstance ci
+        SET ci.dockerContainerId = :dockerId,
+            ci.containerIp = :containerIp,
+            ci.status = :running,
+            ci.startedAt = :startedAt
+        WHERE ci.id = :id
+          AND ci.status = :pending
+    """)
+    int markRunningIfPending(@Param("id") UUID id,
+                             @Param("dockerId") String dockerId,
+                             @Param("containerIp") String containerIp,
+                             @Param("startedAt") Instant startedAt,
+                             @Param("pending") ContainerInstance.InstanceStatus pending,
+                             @Param("running") ContainerInstance.InstanceStatus running);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE ContainerInstance ci SET ci.status = :to WHERE ci.id = :id AND ci.status = :from")
+    int transitionStatus(@Param("id") UUID id,
+                         @Param("from") ContainerInstance.InstanceStatus from,
+                         @Param("to") ContainerInstance.InstanceStatus to);
+
+    default boolean promoteToRunning(UUID id, String dockerId, String containerIp, Instant startedAt) {
+        return markRunningIfPending(id, dockerId, containerIp, startedAt,
+                ContainerInstance.InstanceStatus.PENDING, ContainerInstance.InstanceStatus.RUNNING) == 1;
+    }
 }

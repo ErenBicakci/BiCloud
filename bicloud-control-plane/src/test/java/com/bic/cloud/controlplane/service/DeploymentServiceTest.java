@@ -19,6 +19,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -221,9 +222,72 @@ class DeploymentServiceTest {
 
         deploymentService.deploy(projectImage);
 
-        verify(projectImageRepository, atLeastOnce()).save(projectImage);
-        assertThat(projectImage.getConsecutiveDeployFailures()).isEqualTo(1);
+        verify(projectImageRepository).recordDeployFailure(eq(10L), any(Instant.class));
+        verify(projectImageRepository, never()).save(any());
         verify(workerHttpClient, never()).createContainer(any(), any());
+    }
+
+    @Test
+    @DisplayName("deploy -> a created container is promoted to RUNNING and registered with the gateway")
+    void deploy_success_promotesReservationAndRegistersRoute() {
+        ContainerInstance pendingInstance = stubSingleReplicaCreation("docker-ok-1");
+        when(containerInstanceRepository.promoteToRunning(
+                eq(pendingInstance.getId()), eq("docker-ok-1"), eq("172.18.0.5"), any(Instant.class)))
+                .thenReturn(true);
+
+        deploymentService.deploy(projectImage);
+
+        assertThat(pendingInstance.getStatus()).isEqualTo(ContainerInstance.InstanceStatus.RUNNING);
+        assertThat(pendingInstance.getDockerContainerId()).isEqualTo("docker-ok-1");
+        verify(gatewayNotificationService).register(pendingInstance);
+        verify(projectImageRepository).clearDeployFailures(10L);
+        verify(workerHttpClient, never()).stopAndRemoveContainer(any(), anyString());
+    }
+
+    @Test
+    @DisplayName("deploy -> a reservation released while the worker was creating the container is not revived")
+    void deploy_releasedReservation_discardsCreatedContainer() {
+        ContainerInstance pendingInstance = stubSingleReplicaCreation("docker-orphan-1");
+        when(containerInstanceRepository.promoteToRunning(
+                eq(pendingInstance.getId()), eq("docker-orphan-1"), eq("172.18.0.5"), any(Instant.class)))
+                .thenReturn(false);
+
+        deploymentService.deploy(projectImage);
+
+        verify(workerHttpClient).stopAndRemoveContainer(worker, "docker-orphan-1");
+        verify(gatewayNotificationService, never()).register(any());
+        verify(containerInstanceRepository, never()).save(any());
+        assertThat(pendingInstance.getStatus()).isEqualTo(ContainerInstance.InstanceStatus.PENDING);
+    }
+
+    private ContainerInstance stubSingleReplicaCreation(String dockerId) {
+        projectImage.setDesiredReplicas(1);
+        when(containerInstanceRepository.countByProjectImageAndStatus(any(), eq(ContainerInstance.InstanceStatus.RUNNING)))
+                .thenReturn(0L);
+        when(containerInstanceRepository.countByProjectImageAndStatus(any(), eq(ContainerInstance.InstanceStatus.PENDING)))
+                .thenReturn(0L);
+        when(projectImageRepository.findByIdForDeployment(10L)).thenReturn(Optional.of(projectImage));
+
+        WorkerContainerCreateRequest createReq = new WorkerContainerCreateRequest();
+        createReq.setCpuLimitMillicores(200);
+        createReq.setMemoryLimitMb(256);
+        when(workerRequestMapper.toWorkerRequest(projectImage)).thenReturn(createReq);
+
+        ContainerInstance pendingInstance = ContainerInstance.builder()
+                .id(UUID.randomUUID())
+                .projectImage(projectImage)
+                .workerNode(worker)
+                .status(ContainerInstance.InstanceStatus.PENDING)
+                .build();
+        when(scoringService.selectAndReserveWorker(eq(projectImage), anyInt(), anyLong()))
+                .thenReturn(Optional.of(pendingInstance));
+
+        when(workerHttpClient.createContainer(eq(worker), any())).thenReturn(
+                WorkerContainerCreateResponse.builder()
+                        .containerId(dockerId)
+                        .containerIp("172.18.0.5")
+                        .build());
+        return pendingInstance;
     }
 
     @Test

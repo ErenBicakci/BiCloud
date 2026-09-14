@@ -58,12 +58,16 @@ class AutoscalingServiceTest {
         assertThat(image.getDesiredReplicas()).isEqualTo(2);
         verify(deploymentService, never()).scaleAsync(anyLong(), anyInt());
 
+        when(projectImageRepository.applyAutoscaledReplicas(eq(1L), eq(2), eq(3), any(Instant.class)))
+                .thenReturn(1);
+
         autoscalingService.reconcileAll();
 
         assertThat(image.getDesiredReplicas()).isEqualTo(3);
         assertThat(image.getLastAutoscaledAt()).isNotNull();
-        verify(projectImageRepository).save(image);
+        verify(projectImageRepository, never()).save(any());
         verify(deploymentService).scaleAsync(1L, 3);
+        assertThat(autoscalingService.sampleCount(1L)).isZero();
     }
 
     @Test
@@ -86,11 +90,36 @@ class AutoscalingServiceTest {
         assertThat(image.getDesiredReplicas()).isEqualTo(3);
         verify(deploymentService, never()).scaleAsync(anyLong(), anyInt());
 
+        when(projectImageRepository.applyAutoscaledReplicas(eq(1L), eq(3), eq(2), any(Instant.class)))
+                .thenReturn(1);
+
         autoscalingService.reconcileAll();
 
         assertThat(image.getDesiredReplicas()).isEqualTo(2);
-        verify(projectImageRepository).save(image);
+        verify(projectImageRepository, never()).save(any());
         verify(deploymentService).scaleAsync(1L, 2);
+    }
+
+    @Test
+    @DisplayName("reconcile -> does not scale when the service changed after it was loaded")
+    void reconcile_skipsWhenServiceChangedConcurrently() {
+        ProjectImage image = buildImage(2);
+        List<ContainerInstance> running = List.of(
+                buildInstance(image, "container-1"),
+                buildInstance(image, "container-2"));
+
+        stubStableRunningService(image, running);
+        when(containerMetricsService.getLatest("container-1")).thenReturn(metric(95));
+        when(containerMetricsService.getLatest("container-2")).thenReturn(metric(95));
+        // e.g. the user scaled or stopped the service between the read and the write
+        when(projectImageRepository.applyAutoscaledReplicas(eq(1L), eq(2), eq(3), any(Instant.class)))
+                .thenReturn(0);
+
+        runReconcileRounds(4);
+
+        assertThat(image.getDesiredReplicas()).isEqualTo(2);
+        verify(deploymentService, never()).scaleAsync(anyLong(), anyInt());
+        verifyNoInteractions(auditService);
     }
 
     @Test
@@ -105,7 +134,7 @@ class AutoscalingServiceTest {
         autoscalingService.reconcileAll();
 
         verify(containerInstanceRepository, never()).findByProjectImageAndStatus(any(), any());
-        verify(projectImageRepository, never()).save(any());
+        verify(projectImageRepository, never()).applyAutoscaledReplicas(anyLong(), anyInt(), anyInt(), any());
         verify(deploymentService, never()).scaleAsync(anyLong(), anyInt());
     }
 
@@ -125,7 +154,7 @@ class AutoscalingServiceTest {
         runReconcileRounds(4);
 
         assertThat(image.getDesiredReplicas()).isEqualTo(2);
-        verify(projectImageRepository, never()).save(any());
+        verify(projectImageRepository, never()).applyAutoscaledReplicas(anyLong(), anyInt(), anyInt(), any());
         verify(deploymentService, never()).scaleAsync(anyLong(), anyInt());
     }
 

@@ -213,9 +213,8 @@ class SelfHealingSchedulerTest {
         scheduler.reconcile();
 
         verify(deploymentService, never()).deployAsync(anyLong());
-        verify(projectImageRepository).save(image);
-        org.assertj.core.api.Assertions.assertThat(image.getConsecutiveDeployFailures()).isGreaterThanOrEqualTo(5);
-        org.assertj.core.api.Assertions.assertThat(image.getLastDeployFailureAt()).isNotNull();
+        verify(projectImageRepository).markCrashLoop(eq(1L), eq(5), any(Instant.class));
+        verify(projectImageRepository, never()).save(any());
     }
 
     @Test
@@ -233,7 +232,7 @@ class SelfHealingSchedulerTest {
         scheduler.reconcile();
 
         verify(deploymentService, times(1)).deployAsync(1L);
-        verify(projectImageRepository, never()).save(any());
+        verify(projectImageRepository, never()).markCrashLoop(anyLong(), anyInt(), any());
     }
 
     private ProjectImage buildImage(Long id, String serviceName, int desiredReplicas) {

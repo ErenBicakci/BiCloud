@@ -259,11 +259,19 @@ public class DeploymentService {
                     break;
                 }
 
+                Instant startedAt = Instant.now();
+                if (!containerInstanceRepository.promoteToRunning(
+                        instance.getId(), response.getContainerId(), response.getContainerIp(), startedAt)) {
+                    log.warn("[Deploy] Reservation {} of '{}' was released while the container was being created. Removing container {}.",
+                            instance.getId(), currentImage.getServiceName(), response.getContainerId());
+                    discardCreatedContainer(bestWorker, response.getContainerId());
+                    continue;
+                }
+
                 instance.setDockerContainerId(response.getContainerId());
                 instance.setContainerIp(response.getContainerIp());
                 instance.setStatus(ContainerInstance.InstanceStatus.RUNNING);
-                instance.setStartedAt(Instant.now());
-                containerInstanceRepository.save(instance);
+                instance.setStartedAt(startedAt);
 
                 gatewayNotificationService.register(instance);
 
@@ -279,13 +287,26 @@ public class DeploymentService {
                         currentImage.getServiceName(),
                         bestWorker.getWorkerName(), e);
 
+                containerInstanceRepository.transitionStatus(instance.getId(),
+                        ContainerInstance.InstanceStatus.PENDING, ContainerInstance.InstanceStatus.FAILED);
                 instance.setStatus(ContainerInstance.InstanceStatus.FAILED);
-                containerInstanceRepository.save(instance);
                 failureCount++;
             }
         }
 
         updateBackoffCounters(projectImage, successCount, failureCount);
+    }
+
+    private void discardCreatedContainer(WorkerNode worker, String dockerContainerId) {
+        if (dockerContainerId == null || dockerContainerId.isBlank()) {
+            return;
+        }
+        try {
+            workerHttpClient.stopAndRemoveContainer(worker, dockerContainerId);
+        } catch (Exception e) {
+            log.warn("[Deploy] Could not remove unclaimed container {} on worker {}: {}",
+                    dockerContainerId, worker.getWorkerName(), e.getMessage());
+        }
     }
 
     private void updateBackoffCounters(ProjectImage image, int successCount, int failureCount) {
@@ -295,23 +316,20 @@ public class DeploymentService {
         }
 
         if (successCount > 0) {
-            if (image.getConsecutiveDeployFailures() > 0 || image.getLastDeployFailureAt() != null) {
-                log.info("[Backoff] Service '{}' recovered - resetting failure counter (was={})",
-                        image.getServiceName(), image.getConsecutiveDeployFailures());
-                image.setConsecutiveDeployFailures(0);
-                image.setLastDeployFailureAt(null);
-                projectImageRepository.save(image);
+            if (projectImageRepository.clearDeployFailures(image.getId()) > 0) {
+                log.info("[Backoff] Service '{}' recovered - failure counter reset",
+                        image.getServiceName());
             }
             return;
         }
 
-        int newCount = image.getConsecutiveDeployFailures() + 1;
-        image.setConsecutiveDeployFailures(newCount);
-        image.setLastDeployFailureAt(Instant.now());
-        projectImageRepository.save(image);
+        projectImageRepository.recordDeployFailure(image.getId(), Instant.now());
 
+        int failures = projectImageRepository.findById(image.getId())
+                .map(ProjectImage::getConsecutiveDeployFailures)
+                .orElse(image.getConsecutiveDeployFailures() + 1);
         log.warn("[Backoff] Service '{}' deploy failed ({} consecutive failure(s))",
-                image.getServiceName(), newCount);
+                image.getServiceName(), failures);
     }
 
     private void removeReplicas(ProjectImage projectImage, int count) {

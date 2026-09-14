@@ -2,9 +2,13 @@ package com.bic.cloud.controlplane.repository;
 
 import com.bic.cloud.controlplane.model.ProjectImage;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -41,5 +45,61 @@ public interface ProjectImageRepository extends JpaRepository<ProjectImage, Long
     """)
     Optional<ProjectImage> findByIdForDeployment(Long id);
 
+    // Background jobs work on snapshots that can be minutes old; saving such a
+    // snapshot would revert whatever the user changed in the meantime. These
+    // updates touch only the columns the job owns.
 
+    @Transactional
+    @Modifying
+    @Query("""
+        UPDATE ProjectImage pi
+        SET pi.consecutiveDeployFailures = pi.consecutiveDeployFailures + 1,
+            pi.lastDeployFailureAt = :failedAt
+        WHERE pi.id = :id
+    """)
+    int recordDeployFailure(@Param("id") Long id, @Param("failedAt") Instant failedAt);
+
+    @Transactional
+    @Modifying
+    @Query("""
+        UPDATE ProjectImage pi
+        SET pi.consecutiveDeployFailures = 0,
+            pi.lastDeployFailureAt = NULL
+        WHERE pi.id = :id
+          AND (pi.consecutiveDeployFailures > 0 OR pi.lastDeployFailureAt IS NOT NULL)
+    """)
+    int clearDeployFailures(@Param("id") Long id);
+
+    @Transactional
+    @Modifying
+    @Query("""
+        UPDATE ProjectImage pi
+        SET pi.consecutiveDeployFailures = CASE
+                WHEN pi.consecutiveDeployFailures < :minFailures THEN :minFailures
+                ELSE pi.consecutiveDeployFailures
+            END,
+            pi.lastDeployFailureAt = :failedAt
+        WHERE pi.id = :id
+    """)
+    int markCrashLoop(@Param("id") Long id,
+                      @Param("minFailures") int minFailures,
+                      @Param("failedAt") Instant failedAt);
+
+    // Compare-and-set: only applies when nobody changed the replica target and
+    // the service is still autoscaled and running since the autoscaler read it.
+    @Transactional
+    @Modifying
+    @Query("""
+        UPDATE ProjectImage pi
+        SET pi.desiredReplicas = :newReplicas,
+            pi.lastAutoscaledAt = :scaledAt
+        WHERE pi.id = :id
+          AND pi.desiredReplicas = :expectedReplicas
+          AND pi.autoscalingEnabled = true
+          AND pi.stoppedByUser = false
+    """)
+    int applyAutoscaledReplicas(@Param("id") Long id,
+                                @Param("expectedReplicas") int expectedReplicas,
+                                @Param("newReplicas") int newReplicas,
+                                @Param("scaledAt") Instant scaledAt);
 }

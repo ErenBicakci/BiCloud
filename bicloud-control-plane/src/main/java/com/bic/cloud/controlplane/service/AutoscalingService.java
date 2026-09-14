@@ -145,7 +145,7 @@ public class AutoscalingService {
         }
     }
 
-    private int sampleCount(Long imageId) {
+    int sampleCount(Long imageId) {
         Deque<Double> samples = cpuUtilizationHistory.get(imageId);
         if (samples == null) {
             return 0;
@@ -175,10 +175,19 @@ public class AutoscalingService {
             return;
         }
 
+        Instant scaledAt = Instant.now();
+        if (projectImageRepository.applyAutoscaledReplicas(image.getId(), oldReplicas, newReplicas, scaledAt) == 0) {
+            log.debug("[Autoscaler] Service '{}' changed since this round started (scaled, stopped or autoscaling disabled). Skipping.",
+                    image.getServiceName());
+            return;
+        }
+
         image.setDesiredReplicas(newReplicas);
-        image.setStoppedByUser(false);
-        image.setLastAutoscaledAt(Instant.now());
-        projectImageRepository.save(image);
+        image.setLastAutoscaledAt(scaledAt);
+
+        // samples taken before the change describe a different replica count;
+        // the next decision has to be based on the new replica set only
+        cpuUtilizationHistory.remove(image.getId());
 
         deploymentService.scaleAsync(image.getId(), newReplicas);
 

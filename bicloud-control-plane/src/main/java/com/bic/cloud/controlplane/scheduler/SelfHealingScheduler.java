@@ -187,10 +187,7 @@ public class SelfHealingScheduler {
                 recentFailures,
                 CRASH_LOOP_WINDOW.toMinutes());
 
-        image.setConsecutiveDeployFailures(
-                Math.max(image.getConsecutiveDeployFailures(), MAX_CONSECUTIVE_FAILURES));
-        image.setLastDeployFailureAt(Instant.now());
-        projectImageRepository.save(image);
+        projectImageRepository.markCrashLoop(image.getId(), MAX_CONSECUTIVE_FAILURES, Instant.now());
 
         auditService.systemAction(COMPONENT, AuditEvent.AuditAction.CRASH_LOOP_DETECTED,
                 AuditEvent.Severity.WARN, AuditEvent.TargetType.SERVICE,
