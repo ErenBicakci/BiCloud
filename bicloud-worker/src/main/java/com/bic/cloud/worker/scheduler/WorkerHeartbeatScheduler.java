@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
 
 import java.time.Instant;
@@ -47,6 +48,15 @@ public class WorkerHeartbeatScheduler {
 
         } catch (ResourceAccessException e) {
             recordHeartbeatFailure("Control plane heartbeat timed out or is unreachable", e);
+        } catch (HttpClientErrorException e) {
+            if (e.getStatusCode().value() == 404) {
+                log.warn("Control plane does not recognize workerId={} - re-registering.",
+                        workerStartup.getWorkerId());
+                consecutiveFailures = 0;
+                workerStartup.markUnregistered();
+            } else {
+                recordHeartbeatFailure("Heartbeat rejected", e);
+            }
         } catch (Exception e) {
             recordHeartbeatFailure("Heartbeat failed", e);
         }

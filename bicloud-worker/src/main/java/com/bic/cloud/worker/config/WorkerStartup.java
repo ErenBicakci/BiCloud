@@ -6,6 +6,7 @@ import com.bic.cloud.worker.dto.WorkerRegisterRequest;
 import com.bic.cloud.worker.dto.WorkerRegisterResponse;
 import com.bic.cloud.worker.metrics.WorkerMetricsService;
 import com.bic.cloud.worker.service.GracefulShutdownService;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -46,9 +47,13 @@ public class WorkerStartup {
 
     private int retryCount = 0;
 
+    @PostConstruct
+    void loadStoredWorkerId() {
+        loadWorkerIdFromDisk();
+    }
+
     @EventListener(ApplicationReadyEvent.class)
     public void onStartup() {
-        loadWorkerIdFromDisk();
         attemptRegister();
     }
 
@@ -57,6 +62,10 @@ public class WorkerStartup {
         if (!registered) {
             attemptRegister();
         }
+    }
+
+    public void markUnregistered() {
+        registered = false;
     }
 
     @PreDestroy

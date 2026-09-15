@@ -176,11 +176,13 @@ public class WorkerService {
         WorkerState state = stateRepository.findById(workerId)
                 .orElseThrow(() -> new WorkerNotFoundException(workerId));
 
-        state.setStatus(WorkerState.NodeStatus.MAINTENANCE);
+        if (state.getStatus() != WorkerState.NodeStatus.MAINTENANCE) {
+            state.setStatus(WorkerState.NodeStatus.OFFLINE);
+        }
         state.setLastHeartbeat(Instant.now());
         stateRepository.save(state);
 
-        log.info("Worker {} deregistered (graceful shutdown). Status -> MAINTENANCE", workerId);
+        log.info("Worker {} deregistered (graceful shutdown). Status -> {}", workerId, state.getStatus());
 
         markContainersStopped(workerId, state.getWorker().getWorkerName());
     }
