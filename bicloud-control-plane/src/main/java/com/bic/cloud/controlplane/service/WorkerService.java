@@ -210,23 +210,44 @@ public class WorkerService {
     public void handleContainerStatusUpdate(ContainerStatusUpdateRequest request) {
 
         String dockerId = request.getDockerContainerId();
+        ContainerInstance instance = dockerId == null ? null
+                : containerInstanceRepository.findByDockerContainerId(dockerId).orElse(null);
 
-        containerInstanceRepository.findByDockerContainerId(dockerId)
-                .ifPresentOrElse(instance -> {
-                    try {
-                        ContainerInstance.InstanceStatus newStatus =
-                                ContainerInstance.InstanceStatus.valueOf(request.getStatus());
-                        instance.setStatus(newStatus);
-                        containerInstanceRepository.save(instance);
+        if (instance == null) {
+            log.warn("Container status update for unknown container: {}", dockerId);
+            return;
+        }
+        if (request.getWorkerId() != null && !request.getWorkerId().equals(instance.getWorkerNode().getId())) {
+            log.warn("Ignoring status update for container {} from worker {} that does not run it",
+                    dockerId, request.getWorkerId());
+            return;
+        }
+        if (instance.getStatus() == ContainerInstance.InstanceStatus.STOPPING
+                || instance.getStatus() == ContainerInstance.InstanceStatus.STOPPED) {
+            log.debug("Container {} is being stopped by the control plane; ignoring reported status {}",
+                    dockerId, request.getStatus());
+            return;
+        }
 
-                        log.info("Container {} status updated to {} (worker: {}, message: {})",
-                                dockerId, newStatus, request.getWorkerId(), request.getMessage());
+        ContainerInstance.InstanceStatus newStatus = parseStatus(request.getStatus());
+        if (newStatus == null) {
+            log.warn("Unknown container status '{}' for container {}", request.getStatus(), dockerId);
+            return;
+        }
 
-                    } catch (IllegalArgumentException e) {
-                        log.warn("Unknown container status '{}' for container {}",
-                                request.getStatus(), dockerId);
-                    }
-                }, () -> log.warn("Container status update for unknown container: {}", dockerId));
+        instance.setStatus(newStatus);
+        containerInstanceRepository.save(instance);
+
+        log.info("Container {} status updated to {} (worker: {}, message: {})",
+                dockerId, newStatus, request.getWorkerId(), request.getMessage());
+    }
+
+    private ContainerInstance.InstanceStatus parseStatus(String status) {
+        try {
+            return status == null ? null : ContainerInstance.InstanceStatus.valueOf(status);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     @Transactional

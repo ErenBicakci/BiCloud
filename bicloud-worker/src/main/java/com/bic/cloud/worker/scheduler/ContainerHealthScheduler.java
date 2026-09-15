@@ -58,6 +58,8 @@ public class ContainerHealthScheduler {
                 }
             }
 
+            reportedDeadContainers.retainAll(containers.stream().map(Container::getId).toList());
+
         } catch (Exception e) {
             log.error("Container health check failed", e);
         }

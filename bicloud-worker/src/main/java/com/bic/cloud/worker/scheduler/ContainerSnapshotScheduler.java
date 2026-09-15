@@ -36,14 +36,13 @@ public class ContainerSnapshotScheduler {
         }
 
         try {
-            List<ContainerStatsDto> stats = dockerContainerService.listManagedRunningContainers().stream()
-                    .map(Container::getId)
-                    .map(statsCollector::collect)
-                    .filter(java.util.Objects::nonNull)
-                    .toList();
-
             List<String> runningIds = dockerContainerService.listManagedRunningContainers().stream()
                     .map(Container::getId)
+                    .toList();
+
+            List<ContainerStatsDto> stats = runningIds.stream()
+                    .map(statsCollector::collect)
+                    .filter(java.util.Objects::nonNull)
                     .toList();
 
             ContainerSnapshotRequest snapshot = ContainerSnapshotRequest.builder()
