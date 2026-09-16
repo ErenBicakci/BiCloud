@@ -176,7 +176,7 @@ class DeploymentServiceTest {
     }
 
     @Test
-    @DisplayName("scale -> scaling down removes active instances across RUNNING, PENDING, STOPPING")
+    @DisplayName("scale -> scaling down stops and removes excess instances")
     void scale_scaleDownRemovesActiveInstances() {
         when(containerInstanceRepository.countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.RUNNING))
                 .thenReturn(2L);
@@ -199,6 +199,40 @@ class DeploymentServiceTest {
         verify(gatewayNotificationService).deregister(inst1);
         verify(workerHttpClient).stopAndRemoveContainer(worker, "c-1");
         assertThat(inst1.getStatus()).isEqualTo(ContainerInstance.InstanceStatus.STOPPED);
+    }
+
+    @Test
+    @DisplayName("scale -> scale-down skips instances already stopping and removes pending, then newest replicas")
+    void scale_scaleDownPrefersPendingThenNewest() {
+        when(containerInstanceRepository.countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.RUNNING))
+                .thenReturn(2L);
+        when(containerInstanceRepository.countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.PENDING))
+                .thenReturn(1L);
+
+        ContainerInstance oldest = replica("c-old", ContainerInstance.InstanceStatus.RUNNING, Instant.now().minusSeconds(600));
+        ContainerInstance newest = replica("c-new", ContainerInstance.InstanceStatus.RUNNING, Instant.now().minusSeconds(60));
+        ContainerInstance pending = replica(null, ContainerInstance.InstanceStatus.PENDING, Instant.now());
+        when(containerInstanceRepository.findByProjectImageAndStatusIn(projectImage, List.of(
+                ContainerInstance.InstanceStatus.RUNNING, ContainerInstance.InstanceStatus.PENDING)))
+                .thenReturn(List.of(oldest, newest, pending));
+
+        deploymentService.scale(projectImage, 1);
+
+        assertThat(pending.getStatus()).isEqualTo(ContainerInstance.InstanceStatus.STOPPED);
+        assertThat(newest.getStatus()).isEqualTo(ContainerInstance.InstanceStatus.STOPPED);
+        assertThat(oldest.getStatus()).isEqualTo(ContainerInstance.InstanceStatus.RUNNING);
+        verify(workerHttpClient, never()).stopAndRemoveContainer(worker, "c-old");
+    }
+
+    private ContainerInstance replica(String dockerId, ContainerInstance.InstanceStatus status, Instant createdAt) {
+        return ContainerInstance.builder()
+                .id(UUID.randomUUID())
+                .dockerContainerId(dockerId)
+                .projectImage(projectImage)
+                .workerNode(worker)
+                .status(status)
+                .createdAt(createdAt)
+                .build();
     }
 
     @Test

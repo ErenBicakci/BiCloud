@@ -18,6 +18,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +39,21 @@ public class DeploymentService {
     private final ProjectImageRepository projectImageRepository;
     private final ServiceDiscoveryService serviceDiscoveryService;
     private final GatewayNotificationService gatewayNotificationService;
+
+    private static final List<ContainerInstance.InstanceStatus> ALIVE_STATUSES = List.of(
+            ContainerInstance.InstanceStatus.RUNNING,
+            ContainerInstance.InstanceStatus.PENDING);
+
+    private static final List<ContainerInstance.InstanceStatus> ACTIVE_STATUSES = List.of(
+            ContainerInstance.InstanceStatus.RUNNING,
+            ContainerInstance.InstanceStatus.PENDING,
+            ContainerInstance.InstanceStatus.STOPPING);
+
+    // pending reservations first, then the newest replicas
+    private static final Comparator<ContainerInstance> SCALE_DOWN_ORDER =
+            Comparator.comparing((ContainerInstance ci) -> ci.getStatus() != ContainerInstance.InstanceStatus.PENDING)
+                    .thenComparing(ContainerInstance::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder()));
+
     /**
      * Reconciliation state machine per service:
      * 0 = IDLE
@@ -90,7 +106,6 @@ public class DeploymentService {
             }
         } catch (Exception e) {
             log.error("[Async] Reconciliation failed for imageId={}", imageId, e);
-        } finally {
             state.set(0);
         }
     }
@@ -99,15 +114,11 @@ public class DeploymentService {
         ProjectImage latest = projectImageRepository.findByIdForDeployment(projectImage.getId()).orElse(projectImage);
         int effectiveDesired = latest.isStoppedByUser() ? 0 : latest.getDesiredReplicas();
         if (effectiveDesired <= 0) {
-            long activeCount = containerInstanceRepository.countByProjectImageAndStatusIn(
-                    latest, List.of(
-                            ContainerInstance.InstanceStatus.RUNNING,
-                            ContainerInstance.InstanceStatus.PENDING,
-                            ContainerInstance.InstanceStatus.STOPPING));
-            if (activeCount > 0) {
+            List<ContainerInstance> active = containerInstanceRepository.findByProjectImageAndStatusIn(latest, ACTIVE_STATUSES);
+            if (!active.isEmpty()) {
                 log.info("Service '{}' is stopped or scaled to 0. Removing {} remaining active instance(s).",
-                        latest.getServiceName(), activeCount);
-                removeReplicas(latest, (int) activeCount);
+                        latest.getServiceName(), active.size());
+                active.forEach(this::stopAndRemoveInstance);
             }
             return;
         }
@@ -333,16 +344,10 @@ public class DeploymentService {
     }
 
     private void removeReplicas(ProjectImage projectImage, int count) {
-
-        List<ContainerInstance> active = containerInstanceRepository
-                .findByProjectImageAndStatusIn(projectImage, List.of(
-                        ContainerInstance.InstanceStatus.RUNNING,
-                        ContainerInstance.InstanceStatus.PENDING,
-                        ContainerInstance.InstanceStatus.STOPPING));
-
-        for (int i = 0; i < count && i < active.size(); i++) {
-            stopAndRemoveInstance(active.get(i));
-        }
+        containerInstanceRepository.findByProjectImageAndStatusIn(projectImage, ALIVE_STATUSES).stream()
+                .sorted(SCALE_DOWN_ORDER)
+                .limit(count)
+                .forEach(this::stopAndRemoveInstance);
     }
 
     public void stopAndRemove(ContainerInstance instance) {
