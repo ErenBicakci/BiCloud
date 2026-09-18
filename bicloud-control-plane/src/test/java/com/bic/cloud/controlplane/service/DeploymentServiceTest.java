@@ -10,7 +10,6 @@ import com.bic.cloud.controlplane.model.UserProject;
 import com.bic.cloud.controlplane.model.WorkerNode;
 import com.bic.cloud.controlplane.repository.ContainerInstanceRepository;
 import com.bic.cloud.controlplane.repository.ProjectImageRepository;
-import com.bic.cloud.controlplane.repository.WorkerStateRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -55,9 +54,6 @@ class DeploymentServiceTest {
 
     @Mock
     private GatewayNotificationService gatewayNotificationService;
-
-    @Mock
-    private WorkerStateRepository workerStateRepository;
 
     @InjectMocks
     private DeploymentService deploymentService;
@@ -156,10 +152,7 @@ class DeploymentServiceTest {
     @Test
     @DisplayName("deploy -> stops early when projectImage is cancelled before next replica")
     void deploy_stopsEarlyWhenCancelled() {
-        when(containerInstanceRepository.countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.RUNNING))
-                .thenReturn(0L);
-        when(containerInstanceRepository.countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.PENDING))
-                .thenReturn(0L);
+        when(containerInstanceRepository.countAlive(projectImage)).thenReturn(0L);
 
         ProjectImage cancelledImage = ProjectImage.builder()
                 .id(10L)
@@ -178,10 +171,7 @@ class DeploymentServiceTest {
     @Test
     @DisplayName("scale -> scaling down stops and removes excess instances")
     void scale_scaleDownRemovesActiveInstances() {
-        when(containerInstanceRepository.countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.RUNNING))
-                .thenReturn(2L);
-        when(containerInstanceRepository.countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.PENDING))
-                .thenReturn(0L);
+        when(containerInstanceRepository.countAlive(projectImage)).thenReturn(2L);
 
         ContainerInstance inst1 = ContainerInstance.builder()
                 .id(UUID.randomUUID())
@@ -191,7 +181,7 @@ class DeploymentServiceTest {
                 .status(ContainerInstance.InstanceStatus.RUNNING)
                 .build();
 
-        when(containerInstanceRepository.findByProjectImageAndStatusIn(eq(projectImage), anyList()))
+        when(containerInstanceRepository.findAlive(projectImage))
                 .thenReturn(List.of(inst1));
 
         deploymentService.scale(projectImage, 1);
@@ -204,16 +194,12 @@ class DeploymentServiceTest {
     @Test
     @DisplayName("scale -> scale-down skips instances already stopping and removes pending, then newest replicas")
     void scale_scaleDownPrefersPendingThenNewest() {
-        when(containerInstanceRepository.countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.RUNNING))
-                .thenReturn(2L);
-        when(containerInstanceRepository.countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.PENDING))
-                .thenReturn(1L);
+        when(containerInstanceRepository.countAlive(projectImage)).thenReturn(3L);
 
         ContainerInstance oldest = replica("c-old", ContainerInstance.InstanceStatus.RUNNING, Instant.now().minusSeconds(600));
         ContainerInstance newest = replica("c-new", ContainerInstance.InstanceStatus.RUNNING, Instant.now().minusSeconds(60));
         ContainerInstance pending = replica(null, ContainerInstance.InstanceStatus.PENDING, Instant.now());
-        when(containerInstanceRepository.findByProjectImageAndStatusIn(projectImage, List.of(
-                ContainerInstance.InstanceStatus.RUNNING, ContainerInstance.InstanceStatus.PENDING)))
+        when(containerInstanceRepository.findAlive(projectImage))
                 .thenReturn(List.of(oldest, newest, pending));
 
         deploymentService.scale(projectImage, 1);
@@ -238,10 +224,7 @@ class DeploymentServiceTest {
     @Test
     @DisplayName("deploy -> capacity deficit breaks loop and increments failure backoff")
     void deploy_capacityDeficit_updatesBackoff() {
-        when(containerInstanceRepository.countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.RUNNING))
-                .thenReturn(0L);
-        when(containerInstanceRepository.countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.PENDING))
-                .thenReturn(0L);
+        when(containerInstanceRepository.countAlive(projectImage)).thenReturn(0L);
 
         when(projectImageRepository.findByIdForDeployment(10L))
                 .thenReturn(Optional.of(projectImage));
@@ -296,10 +279,7 @@ class DeploymentServiceTest {
 
     private ContainerInstance stubSingleReplicaCreation(String dockerId) {
         projectImage.setDesiredReplicas(1);
-        when(containerInstanceRepository.countByProjectImageAndStatus(any(), eq(ContainerInstance.InstanceStatus.RUNNING)))
-                .thenReturn(0L);
-        when(containerInstanceRepository.countByProjectImageAndStatus(any(), eq(ContainerInstance.InstanceStatus.PENDING)))
-                .thenReturn(0L);
+        when(containerInstanceRepository.countAlive(any())).thenReturn(0L);
         when(projectImageRepository.findByIdForDeployment(10L)).thenReturn(Optional.of(projectImage));
 
         WorkerContainerCreateRequest createReq = new WorkerContainerCreateRequest();
@@ -327,10 +307,7 @@ class DeploymentServiceTest {
     @Test
     @DisplayName("deploy -> post-creation cancellation cleans up container immediately via stopAndRemoveInstance")
     void deploy_postCreationCancellation_cleansUpContainer() {
-        when(containerInstanceRepository.countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.RUNNING))
-                .thenReturn(0L);
-        when(containerInstanceRepository.countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.PENDING))
-                .thenReturn(0L);
+        when(containerInstanceRepository.countAlive(projectImage)).thenReturn(0L);
 
         ProjectImage activeImage = ProjectImage.builder()
                 .id(10L)

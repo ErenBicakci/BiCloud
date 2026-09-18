@@ -45,10 +45,6 @@ public interface ProjectImageRepository extends JpaRepository<ProjectImage, Long
     """)
     Optional<ProjectImage> findByIdForDeployment(Long id);
 
-    // Background jobs work on snapshots that can be minutes old; saving such a
-    // snapshot would revert whatever the user changed in the meantime. These
-    // updates touch only the columns the job owns.
-
     @Transactional
     @Modifying
     @Query("""
@@ -85,8 +81,6 @@ public interface ProjectImageRepository extends JpaRepository<ProjectImage, Long
                       @Param("minFailures") int minFailures,
                       @Param("failedAt") Instant failedAt);
 
-    // Compare-and-set: only applies when nobody changed the replica target and
-    // the service is still autoscaled and running since the autoscaler read it.
     @Transactional
     @Modifying
     @Query("""

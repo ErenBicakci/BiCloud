@@ -39,7 +39,7 @@ public class ContainerManagementService {
     private final ProjectService projectService;
     private final WorkerStateRepository workerStateRepository;
     private final ContainerMetricsService containerMetricsService;
-    private final GatewayNotificationService gatewayNotificationService;
+    private final DeploymentService deploymentService;
     private final AuditService auditService;
 
     private static final Set<String> ALLOWED_SORT_FIELDS = Set.of("createdAt", "status", "workerName");
@@ -144,69 +144,23 @@ public class ContainerManagementService {
     // Container operations
 
     public void stopContainer(UUID instanceId, BicloudUserDetails caller) {
-        ContainerInstance instance = findInstanceOrThrow(instanceId);
-        projectService.assertOwnerOrAdmin(instance.getProjectImage().getProject(), caller);
-
-        gatewayNotificationService.deregister(instance);
-
-        instance.setStatus(ContainerInstance.InstanceStatus.STOPPING);
-        containerInstanceRepository.save(instance);
-
-        if (instance.getDockerContainerId() == null || instance.getDockerContainerId().isBlank()) {
-            instance.setStatus(ContainerInstance.InstanceStatus.STOPPED);
-            containerInstanceRepository.save(instance);
-            return;
-        }
-
-        try {
-            log.info("Stopping container {} on worker {}",
-                    instance.getDockerContainerId(), instance.getWorkerNode().getWorkerName());
-            workerHttpClient.stopContainer(instance.getWorkerNode(), instance.getDockerContainerId());
-            log.info("Container {} stopped successfully", instance.getDockerContainerId());
-            instance.setStatus(ContainerInstance.InstanceStatus.STOPPED);
-            containerInstanceRepository.save(instance);
-        } catch (Exception e) {
-            log.warn("Worker could not stop container {} (leaving in STOPPING for reconciler): {}",
-                    instance.getDockerContainerId(), e.getMessage());
-        }
-
-        auditService.userAction(caller, AuditEvent.AuditAction.CONTAINER_STOPPED,
-                AuditEvent.TargetType.CONTAINER, instance.getProjectImage().getServiceName(),
-                instance.getProjectImage().getProject(),
-                "Container stopped (" + shortId(instance) + " @ " + instance.getWorkerNode().getWorkerName() + ")");
+        ContainerInstance instance = findOwnedInstance(instanceId, caller);
+        deploymentService.stop(instance);
+        auditContainerAction(caller, instance, AuditEvent.AuditAction.CONTAINER_STOPPED, "Container stopped");
     }
 
     public void removeContainer(UUID instanceId, BicloudUserDetails caller) {
-        ContainerInstance instance = findInstanceOrThrow(instanceId);
-        projectService.assertOwnerOrAdmin(instance.getProjectImage().getProject(), caller);
+        ContainerInstance instance = findOwnedInstance(instanceId, caller);
+        deploymentService.stopAndRemove(instance);
+        auditContainerAction(caller, instance, AuditEvent.AuditAction.CONTAINER_REMOVED, "Container removed");
+    }
 
-        gatewayNotificationService.deregister(instance);
-
-        instance.setStatus(ContainerInstance.InstanceStatus.STOPPING);
-        containerInstanceRepository.save(instance);
-
-        if (instance.getDockerContainerId() == null || instance.getDockerContainerId().isBlank()) {
-            instance.setStatus(ContainerInstance.InstanceStatus.STOPPED);
-            containerInstanceRepository.save(instance);
-            return;
-        }
-
-        try {
-            log.info("Removing container {} on worker {}",
-                    instance.getDockerContainerId(), instance.getWorkerNode().getWorkerName());
-            workerHttpClient.stopAndRemoveContainer(instance.getWorkerNode(), instance.getDockerContainerId());
-            log.info("Container {} removed successfully", instance.getDockerContainerId());
-            instance.setStatus(ContainerInstance.InstanceStatus.STOPPED);
-            containerInstanceRepository.save(instance);
-        } catch (Exception e) {
-            log.warn("Worker could not stop/remove container {} (leaving in STOPPING for reconciler): {}",
-                    instance.getDockerContainerId(), e.getMessage());
-        }
-
-        auditService.userAction(caller, AuditEvent.AuditAction.CONTAINER_REMOVED,
+    private void auditContainerAction(BicloudUserDetails caller, ContainerInstance instance,
+                                      AuditEvent.AuditAction action, String message) {
+        auditService.userAction(caller, action,
                 AuditEvent.TargetType.CONTAINER, instance.getProjectImage().getServiceName(),
                 instance.getProjectImage().getProject(),
-                "Container removed (" + shortId(instance) + " @ " + instance.getWorkerNode().getWorkerName() + ")");
+                message + " (" + shortId(instance) + " @ " + instance.getWorkerNode().getWorkerName() + ")");
     }
 
     private String shortId(ContainerInstance instance) {
@@ -216,8 +170,7 @@ public class ContainerManagementService {
 
     @Transactional(readOnly = true)
     public String getContainerLogs(UUID instanceId, int tailLines, BicloudUserDetails caller) {
-        ContainerInstance instance = findInstanceOrThrow(instanceId);
-        projectService.assertOwnerOrAdmin(instance.getProjectImage().getProject(), caller);
+        ContainerInstance instance = findOwnedInstance(instanceId, caller);
 
         int safeTailLines = clampLogTail(tailLines);
         log.debug("Fetching logs for container {} (tail={})", instance.getDockerContainerId(), safeTailLines);
@@ -268,9 +221,11 @@ public class ContainerManagementService {
         return counts;
     }
 
-    private ContainerInstance findInstanceOrThrow(UUID instanceId) {
-        return containerInstanceRepository.findById(instanceId)
+    private ContainerInstance findOwnedInstance(UUID instanceId, BicloudUserDetails caller) {
+        ContainerInstance instance = containerInstanceRepository.findById(instanceId)
                 .orElseThrow(() -> new ContainerInstanceNotFoundException(instanceId));
+        projectService.assertOwnerOrAdmin(instance.getProjectImage().getProject(), caller);
+        return instance;
     }
 
     private int clampLogTail(int tailLines) {

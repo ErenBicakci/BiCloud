@@ -184,9 +184,6 @@ public class AutoscalingService {
 
         image.setDesiredReplicas(newReplicas);
         image.setLastAutoscaledAt(scaledAt);
-
-        // samples taken before the change describe a different replica count;
-        // the next decision has to be based on the new replica set only
         cpuUtilizationHistory.remove(image.getId());
 
         deploymentService.scaleAsync(image.getId(), newReplicas);
@@ -203,9 +200,8 @@ public class AutoscalingService {
                 reason,
                 cpuSuffix);
 
-        auditService.systemAction(COMPONENT, AuditEvent.AuditAction.AUTOSCALING_SCALED,
-                AuditEvent.Severity.INFO, AuditEvent.TargetType.SERVICE,
-                image.getServiceName(), image.getProject().getId(), ownerOf(image),
+        auditService.serviceEvent(COMPONENT, AuditEvent.AuditAction.AUTOSCALING_SCALED,
+                AuditEvent.Severity.INFO, AuditEvent.TargetType.SERVICE, image,
                 "Autoscaled " + oldReplicas + " -> " + newReplicas
                         + " replica(s): " + reason + cpuSuffix);
     }
@@ -226,14 +222,5 @@ public class AutoscalingService {
                     image.getServiceName(), image.getProject().getName());
         }
         return valid;
-    }
-
-    private String ownerOf(ProjectImage image) {
-        try {
-            return image.getProject().getOwner() != null
-                    ? image.getProject().getOwner().getUsername() : null;
-        } catch (Exception e) {
-            return null;
-        }
     }
 }

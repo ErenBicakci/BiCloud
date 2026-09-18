@@ -27,6 +27,10 @@ public class BicloudUserDetails implements UserDetails {
         this.authorities = List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole()));
     }
 
+    public boolean isAdmin() {
+        return "ADMIN".equals(role);
+    }
+
     @Override
     public boolean isAccountNonExpired() { return true; }
 

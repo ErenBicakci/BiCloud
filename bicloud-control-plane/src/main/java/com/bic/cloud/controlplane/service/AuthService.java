@@ -38,7 +38,6 @@ public class AuthService {
     }
 
     public AuthResponse login(LoginRequest request) {
-        // BCrypt ignores bytes past 72 when matching; never let such a password match by prefix
         if (RegisterRequest.exceedsPasswordLimit(request.password())) {
             throw new BadCredentialsException("Bad credentials");
         }

@@ -21,7 +21,6 @@ import { extractError } from '../../utils/common';
 import { Button, Input } from '../../components/ui';
 
 const REGISTER_PASSWORD_MIN_LENGTH = 8;
-// BCrypt on the control plane only accepts passwords up to 72 bytes
 const REGISTER_PASSWORD_MAX_BYTES = 72;
 
 const LoginPage = () => {

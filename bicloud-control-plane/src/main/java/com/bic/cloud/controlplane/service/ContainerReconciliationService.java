@@ -10,7 +10,6 @@ import com.bic.cloud.controlplane.repository.WorkerNodeRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.HashSet;
@@ -75,10 +74,8 @@ public class ContainerReconciliationService {
                         dockerId,
                         ci.getProjectImage().getServiceName());
 
-                auditService.systemAction(COMPONENT, AuditEvent.AuditAction.ZOMBIE_DETECTED,
-                        AuditEvent.Severity.WARN, AuditEvent.TargetType.CONTAINER,
-                        ci.getProjectImage().getServiceName(),
-                        ci.getProjectImage().getProject().getId(), ownerOf(ci),
+                auditService.serviceEvent(COMPONENT, AuditEvent.AuditAction.ZOMBIE_DETECTED,
+                        AuditEvent.Severity.WARN, AuditEvent.TargetType.CONTAINER, ci.getProjectImage(),
                         "Container record not found in Docker, marked FAILED (worker: "
                                 + worker.getWorkerName() + ")");
             }
@@ -112,10 +109,8 @@ public class ContainerReconciliationService {
                     dockerId,
                     ci.getProjectImage().getServiceName());
 
-            auditService.systemAction(COMPONENT, AuditEvent.AuditAction.CONTAINER_RECOVERED,
-                    AuditEvent.Severity.INFO, AuditEvent.TargetType.CONTAINER,
-                    ci.getProjectImage().getServiceName(),
-                    ci.getProjectImage().getProject().getId(), ownerOf(ci),
+            auditService.serviceEvent(COMPONENT, AuditEvent.AuditAction.CONTAINER_RECOVERED,
+                    AuditEvent.Severity.INFO, AuditEvent.TargetType.CONTAINER, ci.getProjectImage(),
                     "Running container falsely marked FAILED was recovered to RUNNING (worker: "
                             + worker.getWorkerName() + ")");
         }
@@ -167,15 +162,6 @@ public class ContainerReconciliationService {
                             dockerId, worker.getWorkerName(), e.getMessage());
                 }
             }
-        }
-    }
-
-    private String ownerOf(ContainerInstance ci) {
-        try {
-            return ci.getProjectImage().getProject().getOwner() != null
-                    ? ci.getProjectImage().getProject().getOwner().getUsername() : null;
-        } catch (Exception e) {
-            return null;
         }
     }
 

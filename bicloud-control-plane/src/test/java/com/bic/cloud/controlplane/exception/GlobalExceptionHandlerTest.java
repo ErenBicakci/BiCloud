@@ -35,10 +35,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/**
- * Client mistakes must come back as 4xx with a stable error code instead of
- * falling through to the generic handler as "500 Unexpected server error".
- */
 @WebMvcTest(controllers = {
         AuthController.class,
         WorkerViewController.class,

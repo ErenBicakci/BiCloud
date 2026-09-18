@@ -115,9 +115,7 @@ public class ProjectImageService {
         if (!requested) {
             return;
         }
-        boolean isAdmin = caller.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
-        if (!isAdmin) {
+        if (!caller.isAdmin()) {
             throw new ForbiddenException("Only admins can enable internet access for a service.");
         }
     }

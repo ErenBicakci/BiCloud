@@ -60,9 +60,7 @@ public class SelfHealingScheduler {
 
             if (desired <= 0 || image.isStoppedByUser()) {
                 long activeCount = containerInstanceRepository.countByProjectImageAndStatusIn(
-                        image, List.of(ContainerInstance.InstanceStatus.RUNNING,
-                                       ContainerInstance.InstanceStatus.PENDING,
-                                       ContainerInstance.InstanceStatus.STOPPING));
+                        image, ContainerInstanceRepository.ACTIVE_STATUSES);
                 if (activeCount > 0) {
                     log.info("[Self-Healing] Service '{}' in project '{}' is stopped/scaled to 0, but has {} active instance(s). Reconciling to 0.",
                             image.getServiceName(), image.getProject().getName(), activeCount);
@@ -71,10 +69,7 @@ public class SelfHealingScheduler {
                 continue;
             }
 
-            long runningCount = containerInstanceRepository
-                    .countByProjectImageAndStatus(image, ContainerInstance.InstanceStatus.RUNNING)
-                    + containerInstanceRepository
-                    .countByProjectImageAndStatus(image, ContainerInstance.InstanceStatus.PENDING);
+            long runningCount = containerInstanceRepository.countAlive(image);
 
             if (runningCount < desired) {
 
@@ -100,9 +95,8 @@ public class SelfHealingScheduler {
 
                 try {
                     deploymentService.deployAsync(image.getId());
-                    auditService.systemAction(COMPONENT, AuditEvent.AuditAction.SELF_HEALING_DEPLOY,
-                            AuditEvent.Severity.WARN, AuditEvent.TargetType.SERVICE,
-                            image.getServiceName(), image.getProject().getId(), ownerOf(image),
+                    auditService.serviceEvent(COMPONENT, AuditEvent.AuditAction.SELF_HEALING_DEPLOY,
+                            AuditEvent.Severity.WARN, AuditEvent.TargetType.SERVICE, image,
                             "Self-healing kicked in: restarting " + (desired - runningCount)
                                     + " missing replica(s) (" + runningCount + "/" + desired + ")");
                 } catch (Exception e) {
@@ -124,9 +118,8 @@ public class SelfHealingScheduler {
                 try {
                     long excess = runningCount - desired;
                     deploymentService.scaleAsync(image.getId(), desired);
-                    auditService.systemAction(COMPONENT, AuditEvent.AuditAction.EXCESS_SCALED_DOWN,
-                            AuditEvent.Severity.INFO, AuditEvent.TargetType.SERVICE,
-                            image.getServiceName(), image.getProject().getId(), ownerOf(image),
+                    auditService.serviceEvent(COMPONENT, AuditEvent.AuditAction.EXCESS_SCALED_DOWN,
+                            AuditEvent.Severity.INFO, AuditEvent.TargetType.SERVICE, image,
                             "Scaled down " + excess + " excess replica(s) to target (" + desired + ")");
                 } catch (Exception e) {
                     log.error("[Self-Healing] Failed to scale down service '{}' in project '{}': {}",
@@ -189,22 +182,12 @@ public class SelfHealingScheduler {
 
         projectImageRepository.markCrashLoop(image.getId(), MAX_CONSECUTIVE_FAILURES, Instant.now());
 
-        auditService.systemAction(COMPONENT, AuditEvent.AuditAction.CRASH_LOOP_DETECTED,
-                AuditEvent.Severity.WARN, AuditEvent.TargetType.SERVICE,
-                image.getServiceName(), image.getProject().getId(), ownerOf(image),
+        auditService.serviceEvent(COMPONENT, AuditEvent.AuditAction.CRASH_LOOP_DETECTED,
+                AuditEvent.Severity.WARN, AuditEvent.TargetType.SERVICE, image,
                 "Crash loop detected: " + recentFailures + " failures in the last "
                         + CRASH_LOOP_WINDOW.toMinutes() + " min. Service put in cooldown.");
 
         return true;
-    }
-
-    private String ownerOf(ProjectImage image) {
-        try {
-            return image.getProject().getOwner() != null
-                    ? image.getProject().getOwner().getUsername() : null;
-        } catch (Exception e) {
-            return null;
-        }
     }
 
     private boolean isInFailureCooldown(com.bic.cloud.controlplane.model.ProjectImage image) {

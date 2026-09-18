@@ -111,7 +111,6 @@ class AutoscalingServiceTest {
         stubStableRunningService(image, running);
         when(containerMetricsService.getLatest("container-1")).thenReturn(metric(95));
         when(containerMetricsService.getLatest("container-2")).thenReturn(metric(95));
-        // e.g. the user scaled or stopped the service between the read and the write
         when(projectImageRepository.applyAutoscaledReplicas(eq(1L), eq(2), eq(3), any(Instant.class)))
                 .thenReturn(0);
 

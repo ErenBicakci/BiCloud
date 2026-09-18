@@ -24,7 +24,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -73,19 +72,14 @@ public class ProjectService {
     }
 
     public void assertOwnerOrAdmin(UserProject project, BicloudUserDetails caller) {
-        boolean isAdmin = caller.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
-        if (!isAdmin && !project.getOwner().getId().equals(caller.getId())) {
+        if (!caller.isAdmin() && !project.getOwner().getId().equals(caller.getId())) {
             throw new ForbiddenException("You are not the owner of project: " + project.getName());
         }
     }
 
     @Transactional(readOnly = true)
     public List<ProjectDetailResponse> listAllProjects(BicloudUserDetails caller) {
-        boolean isAdmin = caller.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
-
-        List<UserProject> projects = isAdmin
+        List<UserProject> projects = caller.isAdmin()
                 ? userProjectRepository.findAll()
                 : userProjectRepository.findAllByOwner_Id(caller.getId());
 

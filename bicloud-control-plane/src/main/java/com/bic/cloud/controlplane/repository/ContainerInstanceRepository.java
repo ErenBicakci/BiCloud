@@ -169,10 +169,6 @@ public interface ContainerInstanceRepository extends JpaRepository<ContainerInst
             @Param("serviceName") String serviceName,
             @Param("search") String search);
 
-    // Conditional transitions: a deploy thread may hold a reservation for minutes
-    // while the worker pulls the image, and scale-down, self-healing or a delete can
-    // take the record over in the meantime. These only succeed if nobody did.
-
     @Transactional
     @Modifying
     @Query("""
@@ -201,5 +197,26 @@ public interface ContainerInstanceRepository extends JpaRepository<ContainerInst
     default boolean promoteToRunning(UUID id, String dockerId, String containerIp, Instant startedAt) {
         return markRunningIfPending(id, dockerId, containerIp, startedAt,
                 ContainerInstance.InstanceStatus.PENDING, ContainerInstance.InstanceStatus.RUNNING) == 1;
+    }
+
+    List<ContainerInstance.InstanceStatus> ALIVE_STATUSES = List.of(
+            ContainerInstance.InstanceStatus.RUNNING,
+            ContainerInstance.InstanceStatus.PENDING);
+
+    List<ContainerInstance.InstanceStatus> ACTIVE_STATUSES = List.of(
+            ContainerInstance.InstanceStatus.RUNNING,
+            ContainerInstance.InstanceStatus.PENDING,
+            ContainerInstance.InstanceStatus.STOPPING);
+
+    default long countAlive(ProjectImage image) {
+        return countByProjectImageAndStatusIn(image, ALIVE_STATUSES);
+    }
+
+    default List<ContainerInstance> findAlive(ProjectImage image) {
+        return findByProjectImageAndStatusIn(image, ALIVE_STATUSES);
+    }
+
+    default List<ContainerInstance> findActive(ProjectImage image) {
+        return findByProjectImageAndStatusIn(image, ACTIVE_STATUSES);
     }
 }

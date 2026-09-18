@@ -3,15 +3,12 @@ package com.bic.cloud.controlplane.service;
 import com.bic.cloud.controlplane.client.WorkerHttpClient;
 import com.bic.cloud.controlplane.dto.WorkerContainerCreateRequest;
 import com.bic.cloud.controlplane.dto.WorkerContainerCreateResponse;
-import com.bic.cloud.controlplane.exception.NoAvailableWorkerException;
 import com.bic.cloud.controlplane.mapper.WorkerRequestMapper;
 import com.bic.cloud.controlplane.model.ContainerInstance;
 import com.bic.cloud.controlplane.model.ProjectImage;
 import com.bic.cloud.controlplane.model.WorkerNode;
-import com.bic.cloud.controlplane.model.WorkerState;
 import com.bic.cloud.controlplane.repository.ContainerInstanceRepository;
 import com.bic.cloud.controlplane.repository.ProjectImageRepository;
-import com.bic.cloud.controlplane.repository.WorkerStateRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -23,7 +20,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -40,19 +36,11 @@ public class DeploymentService {
     private final ServiceDiscoveryService serviceDiscoveryService;
     private final GatewayNotificationService gatewayNotificationService;
 
-    private static final List<ContainerInstance.InstanceStatus> ALIVE_STATUSES = List.of(
-            ContainerInstance.InstanceStatus.RUNNING,
-            ContainerInstance.InstanceStatus.PENDING);
+    private static final Comparator<ContainerInstance> PENDING_FIRST =
+            Comparator.comparing(ci -> ci.getStatus() != ContainerInstance.InstanceStatus.PENDING);
 
-    private static final List<ContainerInstance.InstanceStatus> ACTIVE_STATUSES = List.of(
-            ContainerInstance.InstanceStatus.RUNNING,
-            ContainerInstance.InstanceStatus.PENDING,
-            ContainerInstance.InstanceStatus.STOPPING);
-
-    // pending reservations first, then the newest replicas
-    private static final Comparator<ContainerInstance> SCALE_DOWN_ORDER =
-            Comparator.comparing((ContainerInstance ci) -> ci.getStatus() != ContainerInstance.InstanceStatus.PENDING)
-                    .thenComparing(ContainerInstance::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder()));
+    private static final Comparator<ContainerInstance> NEWEST_FIRST =
+            Comparator.comparing(ContainerInstance::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder()));
 
     /**
      * Reconciliation state machine per service:
@@ -114,12 +102,7 @@ public class DeploymentService {
         ProjectImage latest = projectImageRepository.findByIdForDeployment(projectImage.getId()).orElse(projectImage);
         int effectiveDesired = latest.isStoppedByUser() ? 0 : latest.getDesiredReplicas();
         if (effectiveDesired <= 0) {
-            List<ContainerInstance> active = containerInstanceRepository.findByProjectImageAndStatusIn(latest, ACTIVE_STATUSES);
-            if (!active.isEmpty()) {
-                log.info("Service '{}' is stopped or scaled to 0. Removing {} remaining active instance(s).",
-                        latest.getServiceName(), active.size());
-                active.forEach(this::stopAndRemoveInstance);
-            }
+            stopAndRemoveAll(latest);
             return;
         }
         scale(latest, effectiveDesired);
@@ -131,7 +114,7 @@ public class DeploymentService {
             return;
         }
 
-        long aliveCount = countAlive(projectImage);
+        long aliveCount = containerInstanceRepository.countAlive(projectImage);
 
         int needed = projectImage.getDesiredReplicas() - (int) aliveCount;
 
@@ -149,7 +132,7 @@ public class DeploymentService {
 
     public void scale(ProjectImage projectImage, int newReplicas) {
 
-        long currentAlive = countAlive(projectImage);
+        long currentAlive = containerInstanceRepository.countAlive(projectImage);
 
         if (newReplicas > currentAlive) {
             int toAdd = newReplicas - (int) currentAlive;
@@ -169,13 +152,6 @@ public class DeploymentService {
         }
     }
 
-    private long countAlive(ProjectImage projectImage) {
-        return containerInstanceRepository
-                .countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.RUNNING)
-             + containerInstanceRepository
-                .countByProjectImageAndStatus(projectImage, ContainerInstance.InstanceStatus.PENDING);
-    }
-
     public void undeployProject(Long projectId) {
         for (ProjectImage image : projectImageRepository.findByProject_Id(projectId)) {
             image.setStoppedByUser(true);
@@ -186,15 +162,7 @@ public class DeploymentService {
 
         log.info("Undeploying {} active container(s) for project {}", activeInstances.size(), projectId);
 
-        for (ContainerInstance instance : activeInstances) {
-            if (instance.getStatus() == ContainerInstance.InstanceStatus.PENDING
-                    && (instance.getDockerContainerId() == null || instance.getDockerContainerId().isBlank())) {
-                instance.setStatus(ContainerInstance.InstanceStatus.STOPPED);
-                containerInstanceRepository.save(instance);
-            } else {
-                stopAndRemoveInstance(instance);
-            }
-        }
+        activeInstances.forEach(this::stopAndRemove);
     }
 
     private void deployReplicas(ProjectImage projectImage, int count, int startIndex) {
@@ -210,12 +178,11 @@ public class DeploymentService {
                     ? currentImage.getDesiredReplicas() : 0;
 
             if (currentImage == null || currentImage.isStoppedByUser()
-                    || effectiveDesired <= countAlive(currentImage)) {
-                log.info("[Deploy] Service '{}' deployment cancelled or target reached (stoppedByUser={}, desired={}, alive={}). Aborting remaining replicas.",
+                    || effectiveDesired <= containerInstanceRepository.countAlive(currentImage)) {
+                log.info("[Deploy] Service '{}' deployment cancelled or target reached (stoppedByUser={}, desired={}). Aborting remaining replicas.",
                         projectImage.getServiceName(),
                         currentImage != null && currentImage.isStoppedByUser(),
-                        effectiveDesired,
-                        currentImage != null ? countAlive(currentImage) : 0);
+                        effectiveDesired);
                 break;
             }
 
@@ -266,7 +233,7 @@ public class DeploymentService {
                     log.warn("[Deploy] Service '{}' was stopped while container was creating. Cleaning up container {} immediately.",
                             currentImage.getServiceName(), response.getContainerId());
                     instance.setDockerContainerId(response.getContainerId());
-                    stopAndRemoveInstance(instance);
+                    stopAndRemove(instance);
                     break;
                 }
 
@@ -344,42 +311,57 @@ public class DeploymentService {
     }
 
     private void removeReplicas(ProjectImage projectImage, int count) {
-        containerInstanceRepository.findByProjectImageAndStatusIn(projectImage, ALIVE_STATUSES).stream()
-                .sorted(SCALE_DOWN_ORDER)
+        containerInstanceRepository.findAlive(projectImage).stream()
+                .sorted(PENDING_FIRST.thenComparing(NEWEST_FIRST))
                 .limit(count)
-                .forEach(this::stopAndRemoveInstance);
+                .forEach(this::stopAndRemove);
+    }
+
+    public void stopAndRemoveAll(ProjectImage image) {
+        List<ContainerInstance> active = containerInstanceRepository.findActive(image);
+        if (!active.isEmpty()) {
+            log.info("Removing {} active instance(s) of service '{}'.", active.size(), image.getServiceName());
+            active.forEach(this::stopAndRemove);
+        }
     }
 
     public void stopAndRemove(ContainerInstance instance) {
-        stopAndRemoveInstance(instance);
+        stopInstance(instance, true);
     }
 
-    private void stopAndRemoveInstance(ContainerInstance instance) {
+    public void stop(ContainerInstance instance) {
+        stopInstance(instance, false);
+    }
+
+    private void stopInstance(ContainerInstance instance, boolean remove) {
         gatewayNotificationService.deregister(instance);
 
         instance.setStatus(ContainerInstance.InstanceStatus.STOPPING);
         containerInstanceRepository.save(instance);
 
-        if (instance.getDockerContainerId() == null || instance.getDockerContainerId().isBlank()) {
+        String dockerId = instance.getDockerContainerId();
+        if (dockerId == null || dockerId.isBlank()) {
             instance.setStatus(ContainerInstance.InstanceStatus.STOPPED);
             containerInstanceRepository.save(instance);
             return;
         }
 
         try {
-            workerHttpClient.stopAndRemoveContainer(
-                    instance.getWorkerNode(), instance.getDockerContainerId());
+            if (remove) {
+                workerHttpClient.stopAndRemoveContainer(instance.getWorkerNode(), dockerId);
+            } else {
+                workerHttpClient.stopContainer(instance.getWorkerNode(), dockerId);
+            }
 
-            log.info("Container stopped & removed: {} on worker {}",
-                    instance.getDockerContainerId(),
+            log.info("Container {} {} on worker {}", dockerId, remove ? "stopped & removed" : "stopped",
                     instance.getWorkerNode().getWorkerName());
 
             instance.setStatus(ContainerInstance.InstanceStatus.STOPPED);
             containerInstanceRepository.save(instance);
 
         } catch (Exception e) {
-            log.warn("Worker could not stop/remove container {} (leaving in STOPPING for reconciler): {}",
-                    instance.getDockerContainerId(), e.getMessage());
+            log.warn("Worker could not stop container {} (leaving in STOPPING for reconciler): {}",
+                    dockerId, e.getMessage());
         }
     }
 }

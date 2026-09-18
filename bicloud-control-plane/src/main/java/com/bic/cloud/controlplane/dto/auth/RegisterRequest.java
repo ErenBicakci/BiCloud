@@ -16,7 +16,6 @@ public record RegisterRequest(
         String password
 ) {
 
-    // BCrypt only hashes the first 72 bytes and refuses to encode anything longer
     public static final int MAX_PASSWORD_BYTES = 72;
 
     public static boolean exceedsPasswordLimit(String password) {

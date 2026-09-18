@@ -36,13 +36,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/**
- * Runs the deploy loop against a real persistence context, without a surrounding
- * test transaction, so every repository call commits on its own like in production.
- *
- * Incident: a deploy that failed while the user was fixing the image name saved
- * its stale ProjectImage snapshot and silently reverted the user's edit.
- */
 @DataJpaTest
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class DeploymentServiceConcurrencyTest {
@@ -69,7 +62,6 @@ class DeploymentServiceConcurrencyTest {
 
         WorkerScoringService scoring = mock(WorkerScoringService.class);
         when(scoring.selectAndReserveWorker(any(), anyInt(), anyLong())).thenAnswer(inv -> {
-            // the user fixes the typo and scales up while the deploy is in flight
             ProjectImage fresh = imageRepository.findById(image.getId()).orElseThrow();
             fresh.setImageName("nginx:alpine");
             fresh.setDesiredReplicas(4);
@@ -107,7 +99,6 @@ class DeploymentServiceConcurrencyTest {
 
         WorkerHttpClient workerClient = mock(WorkerHttpClient.class);
         when(workerClient.createContainer(any(), any())).thenAnswer(inv -> {
-            // a scale-down picks the PENDING record while the worker is still pulling
             instanceRepository.transitionStatus(reserved.get().getId(),
                     ContainerInstance.InstanceStatus.PENDING, ContainerInstance.InstanceStatus.STOPPED);
             return WorkerContainerCreateResponse.builder()

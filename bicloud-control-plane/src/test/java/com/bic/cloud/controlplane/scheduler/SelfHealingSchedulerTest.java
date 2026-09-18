@@ -67,8 +67,7 @@ class SelfHealingSchedulerTest {
         ProjectImage image = buildImage(1L, "web", 3);
 
         when(projectImageRepository.findAllWithProject()).thenReturn(List.of(image));
-        when(containerInstanceRepository.countByProjectImageAndStatus(
-                image, ContainerInstance.InstanceStatus.RUNNING)).thenReturn(1L);
+        when(containerInstanceRepository.countAlive(image)).thenReturn(1L);
 
         scheduler.reconcile();
 
@@ -81,8 +80,7 @@ class SelfHealingSchedulerTest {
         ProjectImage image = buildImage(1L, "api", 2);
 
         when(projectImageRepository.findAllWithProject()).thenReturn(List.of(image));
-        when(containerInstanceRepository.countByProjectImageAndStatus(
-                image, ContainerInstance.InstanceStatus.RUNNING)).thenReturn(2L);
+        when(containerInstanceRepository.countAlive(image)).thenReturn(2L);
 
         scheduler.reconcile();
 
@@ -99,7 +97,7 @@ class SelfHealingSchedulerTest {
         scheduler.reconcile();
 
         verify(deploymentService, never()).deployAsync(anyLong());
-        verify(containerInstanceRepository, never()).countByProjectImageAndStatus(any(), any());
+        verify(containerInstanceRepository, never()).countAlive(any());
     }
 
     @Test
@@ -113,7 +111,7 @@ class SelfHealingSchedulerTest {
         scheduler.reconcile();
 
         verify(deploymentService, never()).deployAsync(anyLong());
-        verify(containerInstanceRepository, never()).countByProjectImageAndStatus(any(), any());
+        verify(containerInstanceRepository, never()).countAlive(any());
     }
 
     @Test
@@ -154,14 +152,8 @@ class SelfHealingSchedulerTest {
         when(projectImageRepository.findAllWithProject())
                 .thenReturn(List.of(failingImage, healthyImage));
 
-        when(containerInstanceRepository.countByProjectImageAndStatus(
-                failingImage, ContainerInstance.InstanceStatus.RUNNING)).thenReturn(0L);
-        when(containerInstanceRepository.countByProjectImageAndStatus(
-                failingImage, ContainerInstance.InstanceStatus.PENDING)).thenReturn(0L);
-        when(containerInstanceRepository.countByProjectImageAndStatus(
-                healthyImage, ContainerInstance.InstanceStatus.RUNNING)).thenReturn(0L);
-        when(containerInstanceRepository.countByProjectImageAndStatus(
-                healthyImage, ContainerInstance.InstanceStatus.PENDING)).thenReturn(0L);
+        when(containerInstanceRepository.countAlive(failingImage)).thenReturn(0L);
+        when(containerInstanceRepository.countAlive(healthyImage)).thenReturn(0L);
 
         doThrow(new RuntimeException("Worker unavailable"))
                 .when(deploymentService).deployAsync(1L);
@@ -189,8 +181,7 @@ class SelfHealingSchedulerTest {
         ProjectImage image = buildImage(1L, "api", 1);
 
         when(projectImageRepository.findAllWithProject()).thenReturn(List.of(image));
-        when(containerInstanceRepository.countByProjectImageAndStatus(
-                image, ContainerInstance.InstanceStatus.RUNNING)).thenReturn(3L);
+        when(containerInstanceRepository.countAlive(image)).thenReturn(3L);
 
         scheduler.reconcile();
 
@@ -204,8 +195,7 @@ class SelfHealingSchedulerTest {
         ProjectImage image = buildImage(1L, "crashing-svc", 1);
 
         when(projectImageRepository.findAllWithProject()).thenReturn(List.of(image));
-        when(containerInstanceRepository.countByProjectImageAndStatus(
-                image, ContainerInstance.InstanceStatus.RUNNING)).thenReturn(0L);
+        when(containerInstanceRepository.countAlive(image)).thenReturn(0L);
         when(containerInstanceRepository.countByProjectImageAndStatusAndCreatedAtAfter(
                 eq(image), eq(ContainerInstance.InstanceStatus.FAILED), any()))
                 .thenReturn(6L);
@@ -223,8 +213,7 @@ class SelfHealingSchedulerTest {
         ProjectImage image = buildImage(1L, "flaky-svc", 1);
 
         when(projectImageRepository.findAllWithProject()).thenReturn(List.of(image));
-        when(containerInstanceRepository.countByProjectImageAndStatus(
-                image, ContainerInstance.InstanceStatus.RUNNING)).thenReturn(0L);
+        when(containerInstanceRepository.countAlive(image)).thenReturn(0L);
         when(containerInstanceRepository.countByProjectImageAndStatusAndCreatedAtAfter(
                 eq(image), eq(ContainerInstance.InstanceStatus.FAILED), any()))
                 .thenReturn(2L);

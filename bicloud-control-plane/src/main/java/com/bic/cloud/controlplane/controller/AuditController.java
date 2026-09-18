@@ -31,7 +31,7 @@ public class AuditController {
             @RequestParam(required = false, defaultValue = "50") int limit,
             @AuthenticationPrincipal BicloudUserDetails caller) {
 
-        String ownerScope = isAdmin(caller) ? null : caller.getUsername();
+        String ownerScope = caller.isAdmin() ? null : caller.getUsername();
         return ResponseEntity.ok(query(ownerScope, null, action, beforeId, limit));
     }
 
@@ -68,10 +68,5 @@ public class AuditController {
         } catch (IllegalArgumentException e) {
             return null;
         }
-    }
-
-    private boolean isAdmin(BicloudUserDetails caller) {
-        return caller.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
     }
 }

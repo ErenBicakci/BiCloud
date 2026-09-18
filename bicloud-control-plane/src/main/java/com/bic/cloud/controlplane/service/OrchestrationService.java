@@ -87,10 +87,6 @@ public class OrchestrationService {
 
         deploymentService.undeployProject(projectId);
 
-        auditService.userAction(caller, AuditEvent.AuditAction.PROJECT_DELETED,
-                AuditEvent.TargetType.PROJECT, project.getName(), project,
-                "Project deleted");
-
         transactionTemplate.executeWithoutResult(tx -> {
             List<ContainerInstance> allInstances = containerInstanceRepository.findAllByProjectId(projectId);
             containerInstanceRepository.deleteAll(allInstances);
@@ -100,6 +96,10 @@ public class OrchestrationService {
 
             userProjectRepository.deleteById(projectId);
         });
+
+        auditService.userAction(caller, AuditEvent.AuditAction.PROJECT_DELETED,
+                AuditEvent.TargetType.PROJECT, project.getName(), project,
+                "Project deleted");
 
         log.info("Project '{}' (id={}) deleted successfully.", project.getName(), projectId);
     }
@@ -112,20 +112,7 @@ public class OrchestrationService {
         log.info("Deleting image '{}' (id={}) from project '{}'",
                 image.getServiceName(), imageId, image.getProject().getName());
 
-        List<ContainerInstance> running = containerInstanceRepository
-                .findByProjectImageAndStatus(image, ContainerInstance.InstanceStatus.RUNNING);
-        for (ContainerInstance instance : running) {
-            try {
-                deploymentService.stopAndRemove(instance);
-            } catch (Exception e) {
-                log.warn("Could not stop container {} while deleting image: {}",
-                        instance.getDockerContainerId(), e.getMessage());
-            }
-        }
-
-        auditService.userAction(caller, AuditEvent.AuditAction.SERVICE_DELETED,
-                AuditEvent.TargetType.SERVICE, image.getServiceName(), image.getProject(),
-                "Service deleted");
+        deploymentService.stopAndRemoveAll(image);
 
         transactionTemplate.executeWithoutResult(tx -> {
             List<ContainerInstance> allInstances = containerInstanceRepository.findByProjectImage(image);
@@ -133,6 +120,10 @@ public class OrchestrationService {
 
             projectImageRepository.deleteById(imageId);
         });
+
+        auditService.userAction(caller, AuditEvent.AuditAction.SERVICE_DELETED,
+                AuditEvent.TargetType.SERVICE, image.getServiceName(), image.getProject(),
+                "Service deleted");
 
         log.info("ProjectImage '{}' (id={}) deleted successfully.", image.getServiceName(), imageId);
     }
@@ -181,16 +172,7 @@ public class OrchestrationService {
         });
 
         if (runtimeConfigChanged[0]) {
-            List<ContainerInstance> running = containerInstanceRepository
-                    .findByProjectImageAndStatus(updated, ContainerInstance.InstanceStatus.RUNNING);
-            for (ContainerInstance instance : running) {
-                try {
-                    deploymentService.stopAndRemove(instance);
-                } catch (Exception e) {
-                    log.warn("Could not stop container {} while updating image: {}",
-                            instance.getDockerContainerId(), e.getMessage());
-                }
-            }
+            deploymentService.stopAndRemoveAll(updated);
 
             if (updated.getDesiredReplicas() > 0) {
                 deploymentService.deployAsync(imageId);
