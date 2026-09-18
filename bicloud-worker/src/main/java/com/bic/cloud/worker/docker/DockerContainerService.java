@@ -180,13 +180,23 @@ public class DockerContainerService {
         }
 
         log.info("Pulling image: {}", imageName);
-        boolean pulled = dockerClient.pullImageCmd(imageName)
-                .start()
-                .awaitCompletion(10, TimeUnit.MINUTES);
+        var pull = dockerClient.pullImageCmd(imageName);
+        if (!hasTagOrDigest(imageName)) {
+            pull.withTag("latest");
+        }
+        boolean pulled = pull.start().awaitCompletion(10, TimeUnit.MINUTES);
         if (!pulled) {
             throw new DockerOperationException(imageName, "pull",
                     new RuntimeException("Image pull timed out: " + imageName));
         }
+    }
+
+    // without an explicit tag the Docker API pulls every tag of the repository
+    static boolean hasTagOrDigest(String imageName) {
+        if (imageName.contains("@")) {
+            return true;
+        }
+        return imageName.indexOf(':', imageName.lastIndexOf('/') + 1) >= 0;
     }
 
     public void stopContainer(String containerId) {
