@@ -2,6 +2,7 @@ package com.bic.cloud.controlplane.dto.auth;
 
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import java.nio.charset.StandardCharsets;
@@ -9,6 +10,9 @@ import java.nio.charset.StandardCharsets;
 public record RegisterRequest(
 
         @NotBlank(message = "Username cannot be blank")
+        @Size(min = 3, max = 50, message = "Username must be between 3 and 50 characters")
+        @Pattern(regexp = "^[A-Za-z0-9._-]+$",
+                message = "Username may only contain letters, digits, dots, underscores and hyphens")
         String username,
 
         @NotBlank(message = "Password cannot be blank")

@@ -2,6 +2,7 @@ package com.bic.cloud.controlplane.dto;
 
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import lombok.*;
 
 import java.time.Instant;
@@ -17,6 +18,7 @@ public class WorkerRegisterRequest {
     private UUID workerId;
 
     @NotBlank(message = "workerName is required")
+    @Size(max = 100, message = "workerName may be at most 100 characters")
     private String workerName;
 
     private String ipAddress;

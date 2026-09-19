@@ -22,6 +22,7 @@ import { Button, Input } from '../../components/ui';
 
 const REGISTER_PASSWORD_MIN_LENGTH = 8;
 const REGISTER_PASSWORD_MAX_BYTES = 72;
+const REGISTER_USERNAME_PATTERN = /^[A-Za-z0-9._-]{3,50}$/;
 
 const LoginPage = () => {
   const { login } = useAuth();
@@ -42,6 +43,9 @@ const LoginPage = () => {
   const validate = () => {
     if (!form.username.trim()) return 'Username is required.';
     if (!form.password) return 'Password is required.';
+    if (!isLogin && !REGISTER_USERNAME_PATTERN.test(form.username)) {
+      return 'Username must be 3-50 characters: letters, digits, dots, underscores or hyphens.';
+    }
     if (!isLogin && form.password.length < REGISTER_PASSWORD_MIN_LENGTH) {
       return `Password must be at least ${REGISTER_PASSWORD_MIN_LENGTH} characters.`;
     }

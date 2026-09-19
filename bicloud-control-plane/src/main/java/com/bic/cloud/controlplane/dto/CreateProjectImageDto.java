@@ -23,6 +23,9 @@ public class CreateProjectImageDto {
     private String serviceName;
 
     @NotBlank(message = "imageName is required")
+    @Size(max = 255, message = "imageName may be at most 255 characters.")
+    @Pattern(regexp = "^[A-Za-z0-9][A-Za-z0-9._/:@-]*$",
+            message = "imageName must be an image reference such as nginx:1.27 or registry:5000/app:tag.")
     private String imageName;
 
     @Min(value = 1,  message = "desiredReplicas must be at least 1.")
