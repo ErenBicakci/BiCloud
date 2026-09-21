@@ -7,14 +7,19 @@ import org.springframework.core.annotation.Order;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.server.PathContainer;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
+import org.springframework.web.util.pattern.PathPattern;
+import org.springframework.web.util.pattern.PathPatternParser;
 import reactor.core.publisher.Mono;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Arrays;
+import java.util.List;
 
 
 @Component
@@ -24,12 +29,15 @@ public class ApiKeySecurityFilter implements WebFilter {
 
     private static final String API_KEY_HEADER = "X-Api-Key";
 
+    private static final List<PathPattern> PROTECTED = patterns("/gateway/**", "/actuator/**");
+    private static final List<PathPattern> PUBLIC = patterns("/gateway/health", "/actuator/health/**", "/actuator/info");
+
     @Value("${bicloud.gateway.api-key}")
     private String validApiKey;
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-        String path = exchange.getRequest().getPath().value();
+        PathContainer path = exchange.getRequest().getPath().pathWithinApplication();
 
         if (!requiresAuth(path)) {
             return chain.filter(exchange);
@@ -49,7 +57,7 @@ public class ApiKeySecurityFilter implements WebFilter {
                 : "unknown";
 
         log.warn("Unauthorized gateway access denied | path={} | remote={}",
-                path, remoteAddr);
+                path.value(), remoteAddr);
 
         String json = """
                 {"error":"UNAUTHORIZED","message":"A valid X-Api-Key header is required."}""";
@@ -61,12 +69,12 @@ public class ApiKeySecurityFilter implements WebFilter {
         return exchange.getResponse().writeWith(Mono.just(buf));
     }
 
-    private boolean requiresAuth(String path) {
-        if (path.equals("/gateway/health")) return false;
-        if (path.equals("/actuator") || path.equals("/actuator/")) return true;
-        if (path.equals("/actuator/health") || path.startsWith("/actuator/health/")) return false;
-        if (path.equals("/actuator/info")) return false;
-        if (path.startsWith("/actuator/")) return true;
-        return path.equals("/gateway") || path.startsWith("/gateway/");
+    private static boolean requiresAuth(PathContainer path) {
+        return PROTECTED.stream().anyMatch(p -> p.matches(path))
+                && PUBLIC.stream().noneMatch(p -> p.matches(path));
+    }
+
+    private static List<PathPattern> patterns(String... patterns) {
+        return Arrays.stream(patterns).map(PathPatternParser.defaultInstance::parse).toList();
     }
 }

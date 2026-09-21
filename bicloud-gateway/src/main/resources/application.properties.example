@@ -29,8 +29,7 @@ bicloud.control-plane.api-key=CHANGE_ME
 bicloud.gateway.port=9000
 
 # Actuator
-management.endpoints.web.exposure.include=health,info,gateway
-management.endpoint.gateway.enabled=true
+management.endpoints.web.exposure.include=health,info
 
 # Logging
 logging.level.com.bic.cloud=DEBUG

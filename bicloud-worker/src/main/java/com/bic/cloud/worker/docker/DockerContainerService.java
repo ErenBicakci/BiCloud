@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -200,35 +201,26 @@ public class DockerContainerService {
     }
 
     public void stopContainer(String containerId) {
-        try {
-            dockerClient.stopContainerCmd(containerId).withTimeout(10).exec();
-            log.info("Container stopped: {}", containerId);
-        } catch (Exception e) {
-            throw new DockerOperationException(containerId, "stop", e);
-        }
+        onManagedContainer(containerId, "stop",
+                () -> dockerClient.stopContainerCmd(containerId).withTimeout(10).exec());
+        log.info("Container stopped: {}", containerId);
     }
 
     public void restartContainer(String containerId) {
-        try {
-            dockerClient.restartContainerCmd(containerId).withTimeout(10).exec();
-            log.info("Container restarted: {}", containerId);
-        } catch (Exception e) {
-            throw new DockerOperationException(containerId, "restart", e);
-        }
+        onManagedContainer(containerId, "restart",
+                () -> dockerClient.restartContainerCmd(containerId).withTimeout(10).exec());
+        log.info("Container restarted: {}", containerId);
     }
 
     public void removeContainer(String containerId) {
-        try {
-            dockerClient.removeContainerCmd(containerId).withForce(true).exec();
-            log.info("Container removed: {}", containerId);
-        } catch (Exception e) {
-            throw new DockerOperationException(containerId, "remove", e);
-        }
+        onManagedContainer(containerId, "remove",
+                () -> dockerClient.removeContainerCmd(containerId).withForce(true).exec());
+        log.info("Container removed: {}", containerId);
     }
 
     public String getContainerLogs(String containerId, int tailLines) {
         int safeTailLines = clampLogTail(tailLines);
-        try {
+        return onManagedContainer(containerId, "logs", () -> {
             StringBuilder logs = new StringBuilder();
             dockerClient.logContainerCmd(containerId)
                     .withStdOut(true).withStdErr(true)
@@ -238,8 +230,18 @@ public class DockerContainerService {
                     })
                     .awaitCompletion(10, TimeUnit.SECONDS);
             return logs.toString();
+        });
+    }
+
+    private <T> T onManagedContainer(String containerId, String operation, Callable<T> action) {
+        try {
+            Map<String, String> labels = dockerClient.inspectContainerCmd(containerId).exec().getConfig().getLabels();
+            if (labels == null || !LABEL_MANAGED_VALUE.equals(labels.get(LABEL_MANAGED))) {
+                throw new IllegalStateException("Container is not managed by BiCloud");
+            }
+            return action.call();
         } catch (Exception e) {
-            throw new DockerOperationException(containerId, "logs", e);
+            throw new DockerOperationException(containerId, operation, e);
         }
     }
 
