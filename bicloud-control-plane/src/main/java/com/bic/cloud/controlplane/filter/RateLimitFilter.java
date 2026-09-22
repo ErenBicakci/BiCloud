@@ -2,7 +2,6 @@ package com.bic.cloud.controlplane.filter;
 
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
-import io.github.bucket4j.Refill;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -26,30 +25,20 @@ import java.util.Map;
 @Order(2)
 public class RateLimitFilter extends OncePerRequestFilter {
 
-    @Value("${rate.limit.capacity:100}")
-    private int gatewayCapacity;
-
-    @Value("${rate.limit.refill-seconds:60}")
-    private int gatewayRefillSeconds;
-
-    @Value("${rate.limit.api.capacity:60}")
-    private int apiCapacity;
-
-    @Value("${rate.limit.api.refill-seconds:60}")
-    private int apiRefillSeconds;
-
     private static final int MAX_TRACKED_KEYS = 10_000;
 
-    private final Map<String, Bucket> gatewayBuckets = createLruBucketMap();
-    private final Map<String, Bucket> apiBuckets     = createLruBucketMap();
+    private final Limit authLimit;
+    private final Limit readLimit;
+    private final Limit writeLimit;
 
-    private static Map<String, Bucket> createLruBucketMap() {
-        return Collections.synchronizedMap(new LinkedHashMap<>(256, 0.75f, true) {
-            @Override
-            protected boolean removeEldestEntry(Map.Entry<String, Bucket> eldest) {
-                return size() > MAX_TRACKED_KEYS;
-            }
-        });
+    public RateLimitFilter(@Value("${rate.limit.auth.capacity:10}") int authCapacity,
+                           @Value("${rate.limit.api.read-capacity:300}") int readCapacity,
+                           @Value("${rate.limit.api.capacity:60}") int writeCapacity,
+                           @Value("${rate.limit.refill-seconds:60}") int refillSeconds) {
+        Duration refill = Duration.ofSeconds(refillSeconds);
+        this.authLimit = new Limit(authCapacity, refill);
+        this.readLimit = new Limit(readCapacity, refill);
+        this.writeLimit = new Limit(writeCapacity, refill);
     }
 
     @Override
@@ -58,54 +47,33 @@ public class RateLimitFilter extends OncePerRequestFilter {
                                     FilterChain chain)
             throws ServletException, IOException {
 
-        String path = request.getRequestURI();
+        String path = request.getServletPath();
+        boolean isRead = "GET".equals(request.getMethod());
 
-        if (path.startsWith("/route/")) {
-            applyLimit(gatewayBuckets, resolveIp(request), gatewayCapacity, gatewayRefillSeconds,
-                    response, chain, request);
-            return;
+        Limit limit = null;
+        String key = null;
+
+        if (!isRead && (path.equals("/auth/login") || path.equals("/auth/register"))) {
+            limit = authLimit;
+            key = "ip:" + request.getRemoteAddr();
+        } else if (path.startsWith("/project") || path.startsWith("/containers")) {
+            limit = isRead ? readLimit : writeLimit;
+            key = currentUser();
         }
 
-        if (path.startsWith("/project") || path.startsWith("/containers")) {
-            String userKey = resolveUser();
-            if (userKey == null) {
-                // without a JWT Spring Security will return 401, let it pass here
-                chain.doFilter(request, response);
-                return;
-            }
-            applyLimit(apiBuckets, userKey, apiCapacity, apiRefillSeconds,
-                    response, chain, request);
-            return;
-        }
-
-        chain.doFilter(request, response);
-    }
-
-    private void applyLimit(Map<String, Bucket> buckets, String key,
-                            int capacity, int refillSeconds,
-                            HttpServletResponse response, FilterChain chain,
-                            HttpServletRequest request) throws IOException, ServletException {
-
-        Bucket bucket = buckets.computeIfAbsent(key, k ->
-                Bucket.builder()
-                        .addLimit(Bandwidth.classic(capacity,
-                                Refill.greedy(capacity, Duration.ofSeconds(refillSeconds))))
-                        .build());
-
-        if (bucket.tryConsume(1)) {
+        if (key == null || limit.tryConsume(key)) {
             chain.doFilter(request, response);
-        } else {
-            log.warn("Rate limit exceeded - key={}, path={}", key, request.getRequestURI());
-            response.setStatus(429);
-            response.setContentType("application/json");
-            response.getWriter().write(
-                    "{\"code\":\"RATE_LIMIT_EXCEEDED\",\"message\":\"Too many requests. Max "
-                            + capacity + " requests per " + refillSeconds + " seconds.\"}"
-            );
+            return;
         }
+
+        log.warn("Rate limit exceeded - key={}, path={}", key, path);
+        response.setStatus(429);
+        response.setContentType("application/json");
+        response.getWriter().write("{\"code\":\"RATE_LIMIT_EXCEEDED\",\"message\":\"Too many requests. Max "
+                + limit.capacity() + " requests per " + limit.refill().toSeconds() + " seconds.\"}");
     }
 
-    private String resolveUser() {
+    private String currentUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.isAuthenticated() && !"anonymousUser".equals(auth.getPrincipal())) {
             return "user:" + auth.getName();
@@ -113,11 +81,21 @@ public class RateLimitFilter extends OncePerRequestFilter {
         return null;
     }
 
-    private String resolveIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
+    private record Limit(int capacity, Duration refill, Map<String, Bucket> buckets) {
+
+        Limit(int capacity, Duration refill) {
+            this(capacity, refill, Collections.synchronizedMap(new LinkedHashMap<>(256, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Bucket> eldest) {
+                    return size() > MAX_TRACKED_KEYS;
+                }
+            }));
         }
-        return request.getRemoteAddr();
+
+        boolean tryConsume(String key) {
+            return buckets.computeIfAbsent(key, k -> Bucket.builder()
+                    .addLimit(Bandwidth.builder().capacity(capacity).refillGreedy(capacity, refill).build())
+                    .build()).tryConsume(1);
+        }
     }
 }

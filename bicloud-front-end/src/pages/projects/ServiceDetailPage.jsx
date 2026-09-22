@@ -63,6 +63,7 @@ export default function ServiceDetailPage() {
       const projRes = await projectService.get(projectId);
       setProject(projRes.data);
     } catch (err) {
+      if (silent) return;
       error(extractError(err));
       navigate(`/projects/${projectId}`);
     } finally {

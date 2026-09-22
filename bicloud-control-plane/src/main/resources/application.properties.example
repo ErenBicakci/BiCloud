@@ -25,8 +25,7 @@ bicloud.gateway.api-key=CHANGE_ME
 jwt.secret=CHANGE_ME_MIN_32_CHARS
 jwt.expiration=86400000
 
-rate.limit.capacity=100
 rate.limit.refill-seconds=60
-
+rate.limit.auth.capacity=10
 rate.limit.api.capacity=60
-rate.limit.api.refill-seconds=60
+rate.limit.api.read-capacity=300
