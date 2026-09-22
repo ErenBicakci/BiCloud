@@ -12,10 +12,11 @@ public class CreateProjectDto {
     @Size(min = 2, max = 50,
           message = "Project name must be between 2 and 50 characters.")
     @Pattern(
-            regexp = "^(?!bicloud-)(?!egress-)[a-z](?:[a-z0-9-]{0,48}[a-z0-9])$",
+            regexp = "^(?!bicloud-)(?!egress-)(?!infra$)[a-z](?:[a-z0-9-]{0,48}[a-z0-9])$",
             message = "Project name may only contain lowercase letters, digits and hyphens (-); " +
-                      "it must start with a letter, must not end with a hyphen " +
-                      "and must not start with the reserved 'bicloud-' or 'egress-' prefixes."
+                      "it must start with a letter, must not end with a hyphen, " +
+                      "must not start with the reserved 'bicloud-' or 'egress-' prefixes " +
+                      "and cannot be the reserved name 'infra'."
     )
     private String name;
 }

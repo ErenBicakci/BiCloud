@@ -19,6 +19,8 @@ class RouteNameRulesTest {
         assertThat(RouteNameRules.isProjectName("alpha-")).isFalse();
         assertThat(RouteNameRules.isProjectName("bicloud-alpha")).isFalse();
         assertThat(RouteNameRules.isProjectName("egress-alpha")).isFalse();
+        assertThat(RouteNameRules.isProjectName("infra")).isFalse();
+        assertThat(RouteNameRules.isProjectName("infra-tools")).isTrue();
     }
 
     @Test

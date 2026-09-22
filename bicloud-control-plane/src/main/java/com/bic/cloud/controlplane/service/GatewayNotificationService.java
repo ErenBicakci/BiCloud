@@ -4,12 +4,14 @@ import com.bic.cloud.controlplane.model.ContainerInstance;
 import com.bic.cloud.controlplane.model.WorkerState;
 import com.bic.cloud.controlplane.repository.ContainerInstanceRepository;
 import com.bic.cloud.controlplane.repository.WorkerStateRepository;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
@@ -17,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
 @RequiredArgsConstructor
@@ -38,17 +41,37 @@ public class GatewayNotificationService {
     private final ContainerInstanceRepository containerInstanceRepository;
     private final WorkerStateRepository workerStateRepository;
 
-    @PostConstruct
+    private final AtomicBoolean resyncRunning = new AtomicBoolean();
+
+    @Async("deploymentExecutor")
+    @EventListener(ApplicationReadyEvent.class)
     public void resyncOnStartup() {
         log.info("Gateway startup resync starting...");
-        resyncAll();
+        resyncExclusively();
     }
 
-    public void register(ContainerInstance instance) {
+    @Async("deploymentExecutor")
+    public void resyncInBackground() {
+        resyncExclusively();
+    }
+
+    private void resyncExclusively() {
+        if (!resyncRunning.compareAndSet(false, true)) {
+            log.debug("Gateway resync already running; skipping duplicate request.");
+            return;
+        }
+        try {
+            resyncAll();
+        } finally {
+            resyncRunning.set(false);
+        }
+    }
+
+    public boolean register(ContainerInstance instance) {
         String containerIp = instance.getContainerIp();
         if (containerIp == null || containerIp.isBlank()) {
             log.warn("Gateway register skipped - no containerIp: instanceId={}", instance.getId());
-            return;
+            return false;
         }
 
         String projectName   = instance.getProjectImage().getProject().getName();
@@ -75,10 +98,12 @@ public class GatewayNotificationService {
 
             log.info("Gateway register {}.{} -> {}:{} (gateway={})",
                     serviceName, projectName, containerIp, containerPort, gwUrl);
+            return true;
 
         } catch (Exception e) {
             log.warn("Gateway register failed (non-critical) {}.{} @ {}: {}",
                     serviceName, projectName, gwUrl, e.getMessage());
+            return false;
         }
     }
 
@@ -123,8 +148,7 @@ public class GatewayNotificationService {
 
         int registered = 0;
         for (ContainerInstance instance : running) {
-            if (instance.getContainerIp() != null) {
-                register(instance);
+            if (register(instance)) {
                 registered++;
             }
         }

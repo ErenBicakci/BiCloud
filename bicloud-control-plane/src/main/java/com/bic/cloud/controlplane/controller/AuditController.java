@@ -13,6 +13,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Locale;
 
 @RestController
 @RequiredArgsConstructor
@@ -64,7 +65,7 @@ public class AuditController {
     private AuditEvent.AuditAction parseAction(String raw) {
         if (raw == null || raw.isBlank() || raw.equalsIgnoreCase("ALL")) return null;
         try {
-            return AuditEvent.AuditAction.valueOf(raw.toUpperCase());
+            return AuditEvent.AuditAction.valueOf(raw.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
             return null;
         }

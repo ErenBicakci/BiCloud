@@ -23,6 +23,7 @@ export const CreateProjectModal = ({ isOpen, onClose, onSuccess }) => {
     if (val.endsWith('-')) return setError('Project name cannot end with a hyphen (-).');
     if (val.startsWith('bicloud-')) return setError('The "bicloud-" prefix is reserved by the system and cannot be used.');
     if (val.startsWith('egress-')) return setError('The "egress-" prefix is reserved by the system and cannot be used.');
+    if (val === 'infra') return setError('The name "infra" is reserved by the system and cannot be used.');
 
     setLoading(true);
     try {

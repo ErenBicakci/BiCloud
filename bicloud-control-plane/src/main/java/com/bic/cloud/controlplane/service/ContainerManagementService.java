@@ -24,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -185,7 +186,7 @@ public class ContainerManagementService {
                 .filter(s -> !s.isEmpty() && !s.equalsIgnoreCase("ALL"))
                 .map(s -> {
                     try {
-                        return ContainerInstance.InstanceStatus.valueOf(s.toUpperCase());
+                        return ContainerInstance.InstanceStatus.valueOf(s.toUpperCase(Locale.ROOT));
                     } catch (IllegalArgumentException ex) {
                         log.warn("Unknown status filter value ignored: '{}'", s);
                         return null;

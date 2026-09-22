@@ -7,8 +7,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -36,8 +36,8 @@ public class RouteRegistry {
             log.info("New route created: [{}]", k);
             return ServiceRoute.builder()
                     .routeKey(k)
-                    .projectName(projectName.toLowerCase())
-                    .serviceName(serviceName.toLowerCase())
+                    .projectName(projectName.toLowerCase(Locale.ROOT))
+                    .serviceName(serviceName.toLowerCase(Locale.ROOT))
                     .build();
         });
 
@@ -147,7 +147,7 @@ public class RouteRegistry {
         return routes.entrySet().stream()
                 .collect(Collectors.toUnmodifiableMap(
                         Map.Entry::getKey,
-                        e -> Collections.unmodifiableList(e.getValue().getInstances())
+                        e -> List.copyOf(e.getValue().getInstances())
                 ));
     }
 
@@ -163,7 +163,7 @@ public class RouteRegistry {
 
 
     private boolean hasAnyInstanceForProject(String projectName) {
-        String lowerProject = projectName.toLowerCase();
+        String lowerProject = projectName.toLowerCase(Locale.ROOT);
         return routes.values().stream()
                 .anyMatch(r -> lowerProject.equals(r.getProjectName())
                         && !r.getInstances().isEmpty());

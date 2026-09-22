@@ -5,7 +5,7 @@ import java.util.regex.Pattern;
 public final class RouteNameRules {
 
     public static final String PROJECT_NAME_REGEX =
-            "^(?!bicloud-)(?!egress-)[a-z](?:[a-z0-9-]{0,48}[a-z0-9])$";
+            "^(?!bicloud-)(?!egress-)(?!infra$)[a-z](?:[a-z0-9-]{0,48}[a-z0-9])$";
 
     public static final String SERVICE_NAME_REGEX =
             "^(?!bicloud-)[a-z](?:[a-z0-9-]{0,48}[a-z0-9])$";

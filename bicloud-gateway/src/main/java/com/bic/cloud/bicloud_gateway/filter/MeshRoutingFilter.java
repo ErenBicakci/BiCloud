@@ -6,6 +6,7 @@ import com.bic.cloud.bicloud_gateway.dto.MeshEndpointDto;
 import com.bic.cloud.bicloud_gateway.model.ServiceInstance;
 import com.bic.cloud.bicloud_gateway.registry.RouteRegistry;
 import com.bic.cloud.bicloud_gateway.routing.RouteNameRules;
+import com.bic.cloud.bicloud_gateway.web.JsonResponses;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,9 +14,7 @@ import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.cloud.gateway.support.ServerWebExchangeUtils;
 import org.springframework.core.Ordered;
-import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
@@ -64,7 +63,7 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
 
         MeshTarget target = parseMeshPath(rawPath);
         if (target == null) {
-            return writeError(exchange, HttpStatus.BAD_REQUEST, "INVALID_MESH_PATH",
+            return JsonResponses.error(exchange, HttpStatus.BAD_REQUEST, "INVALID_MESH_PATH",
                     "Expected format: /_bicloud/mesh/{project}/{service}/...");
         }
 
@@ -75,12 +74,12 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
         if (gatewayHop && !isTrustedGatewayHop(exchange, hops)) {
             log.warn("[Mesh] Forged or invalid gateway hop rejected: {}/{}",
                     target.project(), target.service());
-            return writeError(exchange, HttpStatus.FORBIDDEN, "FORBIDDEN",
+            return JsonResponses.error(exchange, HttpStatus.FORBIDDEN, "FORBIDDEN",
                     "Gateway identity could not be verified.");
         }
         if (hops >= MAX_HOPS) {
             log.error("[Mesh] Hop limit ({}) exceeded: {}/{}", MAX_HOPS, target.project(), target.service());
-            return writeError(exchange, HttpStatus.LOOP_DETECTED, "MESH_HOP_LIMIT",
+            return JsonResponses.error(exchange, HttpStatus.LOOP_DETECTED, "MESH_HOP_LIMIT",
                     "Mesh routing hop limit exceeded.");
         }
 
@@ -89,7 +88,7 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
             if (callerProject == null || !callerProject.equalsIgnoreCase(target.project())) {
                 log.warn("[Mesh] Tenant isolation (hop): caller project={} -> {}/{} rejected",
                         callerProject, target.project(), target.service());
-                return writeError(exchange, HttpStatus.FORBIDDEN, "FORBIDDEN",
+                return JsonResponses.error(exchange, HttpStatus.FORBIDDEN, "FORBIDDEN",
                         "Over the mesh you can only reach services in your own project.");
             }
         } else {
@@ -100,7 +99,7 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
             if (callerProject.isEmpty() || !callerProject.get().equalsIgnoreCase(target.project())) {
                 log.warn("[Mesh] Tenant isolation: {} (project={}) -> {}/{} access rejected",
                         callerIp, callerProject.orElse("?"), target.project(), target.service());
-                return writeError(exchange, HttpStatus.FORBIDDEN, "FORBIDDEN",
+                return JsonResponses.error(exchange, HttpStatus.FORBIDDEN, "FORBIDDEN",
                         "Over the mesh you can only reach services in your own project.");
             }
         }
@@ -116,7 +115,7 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
         if (gatewayHop) {
             log.warn("[Mesh] No local instance for a remote request: {}/{}",
                     target.project(), target.service());
-            return writeError(exchange, HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE",
+            return JsonResponses.error(exchange, HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE",
                     "Service '%s' no longer runs on this node.".formatted(target.service()));
         }
 
@@ -135,7 +134,7 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
 
         if (usable.isEmpty()) {
             log.warn("[Mesh] No endpoint found: {}/{}", target.project(), target.service());
-            return writeError(exchange, HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE",
+            return JsonResponses.error(exchange, HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE",
                     "No running instance found for service '%s'.".formatted(target.service()));
         }
 
@@ -164,7 +163,7 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
         return chain.filter(mutated);
     }
 
-    private ServerWebExchange stripInternalHeaders(ServerWebExchange exchange) {
+    static ServerWebExchange stripInternalHeaders(ServerWebExchange exchange) {
         return exchange.mutate()
                 .request(r -> r.headers(h -> {
                     h.remove(GATEWAY_KEY_HEADER);
@@ -206,7 +205,7 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
         return remote.getAddress().getHostAddress();
     }
 
-    private int parseHops(String value) {
+    static int parseHops(String value) {
         try {
             return Integer.parseInt(value);
         } catch (NumberFormatException e) {
@@ -214,15 +213,15 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
         }
     }
 
-    private boolean isTrustedGatewayHop(ServerWebExchange exchange, int hops) {
-        if (hops <= 0) return false;
-
+    static boolean hasGatewayKey(ServerWebExchange exchange, String gatewayApiKey) {
         String key = exchange.getRequest().getHeaders().getFirst(GATEWAY_KEY_HEADER);
-        if (key == null || !MessageDigest.isEqual(
+        return key != null && MessageDigest.isEqual(
                 key.getBytes(StandardCharsets.UTF_8),
-                gatewayApiKey.getBytes(StandardCharsets.UTF_8))) {
-            return false;
-        }
+                gatewayApiKey.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private boolean isTrustedGatewayHop(ServerWebExchange exchange, int hops) {
+        if (hops <= 0 || !hasGatewayKey(exchange, gatewayApiKey)) return false;
 
         String callerIp = remoteIp(exchange);
         if (callerIp == null) return false;
@@ -231,19 +230,6 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
         // app forwards internal headers, that request must remain a first-hop
         // tenant request and cannot become a trusted gateway-to-gateway hop.
         return networkManager.projectForIp(callerIp).isEmpty();
-    }
-
-    private Mono<Void> writeError(ServerWebExchange exchange,
-                                  HttpStatus status, String error, String message) {
-        String json = """
-                {"error":"%s","status":%d,"message":"%s"}"""
-                .formatted(error, status.value(), message);
-
-        exchange.getResponse().setStatusCode(status);
-        exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
-        DataBuffer buf = exchange.getResponse().bufferFactory()
-                .wrap(json.getBytes(StandardCharsets.UTF_8));
-        return exchange.getResponse().writeWith(Mono.just(buf));
     }
 
     private record MeshTarget(String project, String service, String subPath) {}

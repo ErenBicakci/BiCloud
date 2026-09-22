@@ -6,8 +6,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 
@@ -25,7 +26,7 @@ public class ServiceRoute {
     private String serviceName;
 
     @Builder.Default
-    private List<ServiceInstance> instances = new ArrayList<>();
+    private List<ServiceInstance> instances = new CopyOnWriteArrayList<>();
 
     @Builder.Default
     private AtomicInteger roundRobinCounter = new AtomicInteger(0);
@@ -50,6 +51,6 @@ public class ServiceRoute {
     }
 
     public static String buildKey(String projectName, String serviceName) {
-        return projectName.toLowerCase() + ":" + serviceName.toLowerCase();
+        return projectName.toLowerCase(Locale.ROOT) + ":" + serviceName.toLowerCase(Locale.ROOT);
     }
 }

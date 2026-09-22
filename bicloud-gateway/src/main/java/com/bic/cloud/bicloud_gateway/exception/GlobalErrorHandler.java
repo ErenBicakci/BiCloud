@@ -1,18 +1,16 @@
 package com.bic.cloud.bicloud_gateway.exception;
 
+import com.bic.cloud.bicloud_gateway.web.JsonResponses;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.web.reactive.error.ErrorWebExceptionHandler;
 import org.springframework.core.annotation.Order;
-import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 import java.net.ConnectException;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 
 
@@ -40,14 +38,10 @@ public class GlobalErrorHandler implements ErrorWebExceptionHandler {
                         status.value(),
                         status.getReasonPhrase(),
                         sanitize(message),
-                        path
+                        sanitize(path)
                 );
 
-        exchange.getResponse().setStatusCode(status);
-        exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
-        DataBuffer buf = exchange.getResponse().bufferFactory()
-                .wrap(json.getBytes(StandardCharsets.UTF_8));
-        return exchange.getResponse().writeWith(Mono.just(buf));
+        return JsonResponses.write(exchange, status, json);
     }
 
     private HttpStatus resolveStatus(Throwable ex) {

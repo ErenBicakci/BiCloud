@@ -93,8 +93,8 @@ public class WorkerNodeController {
     }
 
     @PostMapping("/gateway-resync")
-    public ResponseEntity<java.util.Map<String, Object>> gatewayResync() {
-        int count = gatewayNotificationService.resyncAll();
-        return ResponseEntity.ok(java.util.Map.of("registered", count));
+    public ResponseEntity<Void> gatewayResync() {
+        gatewayNotificationService.resyncInBackground();
+        return ResponseEntity.accepted().build();
     }
 }

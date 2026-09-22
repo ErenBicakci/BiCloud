@@ -16,6 +16,7 @@ import jakarta.annotation.PostConstruct;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -77,13 +78,7 @@ public class GatewayNetworkManager {
         log.debug("Docker network scan starting...");
 
         try {
-            List<Network> bicloudNetworks = dockerClient.listNetworksCmd()
-                    .exec()
-                    .stream()
-                    .filter(n -> n.getName().startsWith(NETWORK_PREFIX))
-                    .filter(n -> !EXCLUDED_NETWORKS.contains(n.getName()))
-                    .filter(n -> !n.getName().startsWith(EGRESS_PREFIX))
-                    .collect(Collectors.toList());
+            List<Network> bicloudNetworks = listTenantNetworks();
 
             if (bicloudNetworks.isEmpty()) {
                 log.debug("No bicloud-* networks found.");
@@ -110,21 +105,22 @@ public class GatewayNetworkManager {
     }
 
     public void connectToNetwork(String projectName) {
-        String networkName = NETWORK_PREFIX + projectName.toLowerCase();
-        String networkId   = findNetworkId(networkName);
+        String networkName = NETWORK_PREFIX + projectName.toLowerCase(Locale.ROOT);
+        Network network = findNetwork(networkName);
 
-        if (networkId == null) {
+        if (network == null) {
             log.warn("Network not found: {} - the worker may not have created it yet, " +
                      "will retry on the next scan.", networkName);
             return;
         }
 
-        connectToNetworkById(networkName, networkId);
+        connectToNetworkById(networkName, network.getId());
+        addSubnets(network);
     }
 
 
     public void disconnectFromNetwork(String projectName) {
-        String networkName = NETWORK_PREFIX + projectName.toLowerCase();
+        String networkName = NETWORK_PREFIX + projectName.toLowerCase(Locale.ROOT);
 
         if (!connectedNetworks.contains(networkName)) {
             log.debug("Not connected anyway: {}", networkName);
@@ -132,15 +128,15 @@ public class GatewayNetworkManager {
         }
 
         try {
-            String networkId = findNetworkId(networkName);
-            if (networkId == null) {
+            Network network = findNetwork(networkName);
+            if (network == null) {
                 connectedNetworks.remove(networkName);
                 return;
             }
 
             dockerClient.disconnectFromNetworkCmd()
                     .withContainerId(gatewayContainerId)
-                    .withNetworkId(networkId)
+                    .withNetworkId(network.getId())
                     .exec();
 
             connectedNetworks.remove(networkName);
@@ -221,13 +217,7 @@ public class GatewayNetworkManager {
     public Map<String, Set<String>> liveIpsByProject() {
         Map<String, Set<String>> result = new java.util.HashMap<>();
         try {
-            List<Network> networks = dockerClient.listNetworksCmd().exec().stream()
-                    .filter(n -> n.getName().startsWith(NETWORK_PREFIX))
-                    .filter(n -> !EXCLUDED_NETWORKS.contains(n.getName()))
-                    .filter(n -> !n.getName().startsWith(EGRESS_PREFIX))
-                    .toList();
-
-            for (Network n : networks) {
+            for (Network n : listTenantNetworks()) {
                 String project = n.getName().substring(NETWORK_PREFIX.length());
                 Set<String> ips = ConcurrentHashMap.newKeySet();
                 Network detail = dockerClient.inspectNetworkCmd().withNetworkId(n.getId()).exec();
@@ -249,19 +239,39 @@ public class GatewayNetworkManager {
         return result;
     }
 
-    private void rebuildSubnetMap(List<Network> bicloudNetworks) {
+    private List<Network> listTenantNetworks() {
+        return dockerClient.listNetworksCmd().exec().stream()
+                .filter(n -> n.getName().startsWith(NETWORK_PREFIX))
+                .filter(n -> !EXCLUDED_NETWORKS.contains(n.getName()))
+                .filter(n -> !n.getName().startsWith(EGRESS_PREFIX))
+                .toList();
+    }
+
+    private synchronized void rebuildSubnetMap(List<Network> bicloudNetworks) {
         Map<String, String> fresh = new java.util.HashMap<>();
-        for (Network n : bicloudNetworks) {
-            String project = n.getName().substring(NETWORK_PREFIX.length());
-            if (n.getIpam() == null || n.getIpam().getConfig() == null) continue;
-            for (Network.Ipam.Config cfg : n.getIpam().getConfig()) {
-                if (cfg.getSubnet() != null && cfg.getSubnet().contains(".")) {
-                    fresh.put(cfg.getSubnet(), project);
-                }
-            }
-        }
+        bicloudNetworks.forEach(n -> fresh.putAll(subnetsOf(n)));
         this.subnetToProject = Map.copyOf(fresh);
         log.debug("Tenant subnet map updated: {}", subnetToProject);
+    }
+
+    private synchronized void addSubnets(Network network) {
+        Map<String, String> updated = new java.util.HashMap<>(subnetToProject);
+        updated.putAll(subnetsOf(network));
+        this.subnetToProject = Map.copyOf(updated);
+    }
+
+    private static Map<String, String> subnetsOf(Network network) {
+        Map<String, String> subnets = new java.util.HashMap<>();
+        if (network.getIpam() == null || network.getIpam().getConfig() == null) {
+            return subnets;
+        }
+        String project = network.getName().substring(NETWORK_PREFIX.length());
+        for (Network.Ipam.Config cfg : network.getIpam().getConfig()) {
+            if (cfg.getSubnet() != null && cfg.getSubnet().contains(".")) {
+                subnets.put(cfg.getSubnet(), project);
+            }
+        }
+        return subnets;
     }
 
     private static boolean cidrContains(String cidr, long addr) {
@@ -290,13 +300,12 @@ public class GatewayNetworkManager {
         }
     }
 
-    private String findNetworkId(String networkName) {
+    private Network findNetwork(String networkName) {
         return dockerClient.listNetworksCmd()
                 .withNameFilter(networkName)
                 .exec()
                 .stream()
                 .filter(n -> networkName.equals(n.getName()))
-                .map(Network::getId)
                 .findFirst()
                 .orElse(null);
     }

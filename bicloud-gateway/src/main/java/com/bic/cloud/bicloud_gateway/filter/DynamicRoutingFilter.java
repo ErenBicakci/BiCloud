@@ -5,6 +5,7 @@ import com.bic.cloud.bicloud_gateway.dto.MeshEndpointDto;
 import com.bic.cloud.bicloud_gateway.model.ServiceInstance;
 import com.bic.cloud.bicloud_gateway.registry.RouteRegistry;
 import com.bic.cloud.bicloud_gateway.routing.RouteNameRules;
+import com.bic.cloud.bicloud_gateway.web.JsonResponses;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,17 +13,13 @@ import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.cloud.gateway.support.ServerWebExchangeUtils;
 import org.springframework.core.Ordered;
-import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.Locale;
 import java.util.List;
 import java.util.Optional;
@@ -63,7 +60,7 @@ public class DynamicRoutingFilter implements GlobalFilter, Ordered {
 
         if (host == null) {
             log.warn("Invalid/missing Host header -> 404 | raw='{}'", rawHost);
-            return writeError(exchange, HttpStatus.NOT_FOUND,
+            return JsonResponses.error(exchange, HttpStatus.NOT_FOUND,
                     "ROUTE_NOT_FOUND",
                     "Host header is not in the expected format. Expected: {service}.{project}.bicloud.local");
         }
@@ -91,7 +88,7 @@ public class DynamicRoutingFilter implements GlobalFilter, Ordered {
 
         exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_REQUEST_URL_ATTR, targetUri);
 
-        return chain.filter(stripInternalHeaders(exchange));
+        return chain.filter(MeshRoutingFilter.stripInternalHeaders(exchange));
     }
 
     private Mono<Void> forwardToRemoteGateway(ServerWebExchange exchange,
@@ -101,7 +98,7 @@ public class DynamicRoutingFilter implements GlobalFilter, Ordered {
         if (hopsValue != null && isTrustedGatewayHop(exchange)) {
             log.warn("No local instance for a remote request -> 503 | route=[{}:{}]",
                     host.project(), host.service());
-            return writeError(exchange, HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE",
+            return JsonResponses.error(exchange, HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE",
                     "No active instance found for service '%s' in project '%s'."
                             .formatted(host.service(), host.project()));
         }
@@ -122,7 +119,7 @@ public class DynamicRoutingFilter implements GlobalFilter, Ordered {
                     if (usable.isEmpty()) {
                         log.warn("No instance found (CP included) -> 503 | route=[{}:{}]",
                                 host.project(), host.service());
-                        return writeError(exchange, HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE",
+                        return JsonResponses.error(exchange, HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE",
                                 "No active instance found for service '%s' in project '%s'."
                                         .formatted(host.service(), host.project()));
                     }
@@ -191,47 +188,11 @@ public class DynamicRoutingFilter implements GlobalFilter, Ordered {
 
     private boolean isTrustedGatewayHop(ServerWebExchange exchange) {
         String hops = exchange.getRequest().getHeaders().getFirst(MeshRoutingFilter.HOPS_HEADER);
-        if (parseHops(hops) <= 0) return false;
-
-        String key = exchange.getRequest().getHeaders().getFirst(MeshRoutingFilter.GATEWAY_KEY_HEADER);
-        return key != null && MessageDigest.isEqual(
-                key.getBytes(StandardCharsets.UTF_8),
-                gatewayApiKey.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private int parseHops(String value) {
-        try {
-            return Integer.parseInt(value);
-        } catch (RuntimeException e) {
-            return -1;
-        }
-    }
-
-    private ServerWebExchange stripInternalHeaders(ServerWebExchange exchange) {
-        return exchange.mutate()
-                .request(r -> r.headers(h -> {
-                    h.remove(MeshRoutingFilter.GATEWAY_KEY_HEADER);
-                    h.remove(MeshRoutingFilter.CALLER_PROJECT_HEADER);
-                    h.remove(MeshRoutingFilter.HOPS_HEADER);
-                }))
-                .build();
-    }
-
-    private Mono<Void> writeError(ServerWebExchange exchange,
-                                   HttpStatus status, String error, String message) {
-        String json = """
-                {"error":"%s","status":%d,"message":"%s"}"""
-                .formatted(error, status.value(), message);
-
-        exchange.getResponse().setStatusCode(status);
-        exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
-        DataBuffer buf = exchange.getResponse().bufferFactory()
-                .wrap(json.getBytes(StandardCharsets.UTF_8));
-        return exchange.getResponse().writeWith(Mono.just(buf));
+        return MeshRoutingFilter.parseHops(hops) > 0 && MeshRoutingFilter.hasGatewayKey(exchange, gatewayApiKey);
     }
 
     private Mono<Void> writeServiceNotExposed(ServerWebExchange exchange, ParsedHost host) {
-        return writeError(exchange, HttpStatus.FORBIDDEN, "SERVICE_NOT_EXPOSED",
+        return JsonResponses.error(exchange, HttpStatus.FORBIDDEN, "SERVICE_NOT_EXPOSED",
                 "Service '%s' in project '%s' is not exposed through the external gateway."
                         .formatted(host.service(), host.project()));
     }

@@ -1,12 +1,11 @@
 package com.bic.cloud.bicloud_gateway.config;
 
+import com.bic.cloud.bicloud_gateway.web.JsonResponses;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
-import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.server.PathContainer;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
@@ -59,14 +58,8 @@ public class ApiKeySecurityFilter implements WebFilter {
         log.warn("Unauthorized gateway access denied | path={} | remote={}",
                 path.value(), remoteAddr);
 
-        String json = """
-                {"error":"UNAUTHORIZED","message":"A valid X-Api-Key header is required."}""";
-
-        exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
-        exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
-        DataBuffer buf = exchange.getResponse().bufferFactory()
-                .wrap(json.getBytes(StandardCharsets.UTF_8));
-        return exchange.getResponse().writeWith(Mono.just(buf));
+        return JsonResponses.write(exchange, HttpStatus.UNAUTHORIZED, """
+                {"error":"UNAUTHORIZED","message":"A valid X-Api-Key header is required."}""");
     }
 
     private static boolean requiresAuth(PathContainer path) {
