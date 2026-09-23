@@ -561,6 +561,8 @@ Internal APIs are not open:
 - The control plane calls gateways with the gateway API key.
 - Gateway-to-gateway mesh forwarding uses the gateway API key.
 - API key comparison is constant-time.
+- Workers only stop, remove or read logs of containers labeled
+  `bicloud.managed=true`.
 
 ### Container Hardening
 
@@ -639,7 +641,6 @@ The React frontend provides an operational console for users and administrators.
 |-- bicloud-worker/              # Worker node agent
 |-- bicloud-gateway/             # Dynamic gateway and mesh proxy
 |-- bicloud-front-end/           # React SPA
-|-- docs/                        # Commit and project notes
 |-- docker-compose.main-windows.yml
 |-- docker-compose.main-ubuntu.yml
 |-- docker-compose.worker-windows.yml
@@ -719,11 +720,11 @@ docker compose -f docker-compose.main-ubuntu.yml up -d bicloud-postgres
 Default local database values:
 
 ```text
-Host: localhost
+Host: localhost (the port is published on 127.0.0.1 only)
 Port: 5432
 Database: bicloud
 Username: postgres
-Password: postgres
+Password: POSTGRES_PASSWORD from .env (required)
 ```
 
 The Docker volume is:
@@ -739,7 +740,7 @@ Control-plane `application.properties`:
 ```properties
 spring.datasource.url=jdbc:postgresql://localhost:5432/bicloud
 spring.datasource.username=postgres
-spring.datasource.password=postgres
+spring.datasource.password=SAME_AS_POSTGRES_PASSWORD_IN_ENV
 
 bicloud.api-key=CHANGE_ME_WORKER_CP_KEY
 bicloud.gateway.url=http://localhost:9000
@@ -836,13 +837,11 @@ docker compose -f docker-compose.worker-ubuntu.yml up --build -d
 
 Docker access notes:
 
-- Windows gateway compose files use
-  `tcp://host.docker.internal:2375`. Docker Desktop must expose the daemon on
-  localhost TCP for the gateway to manage project networks.
-- Do not open Docker port `2375` to the public network. Keep it local to the
-  machine.
-- Ubuntu compose files use `bicloud-socket-proxy`, which exposes only the Docker
-  network operations the gateway needs.
+- All compose files run `bicloud-socket-proxy`, which exposes only the Docker
+  network operations the gateway needs. Docker Desktop does not need to expose
+  the daemon on TCP `2375`.
+- Never expose the Docker daemon on TCP without TLS: any container that can
+  reach it, including services with internet egress, can control the host.
 
 Gateway health:
 
@@ -1226,6 +1225,8 @@ Future improvements:
 
 - Workers send heartbeat every 5 seconds.
 - The control plane marks stale workers offline.
+- A gracefully stopped worker is shown OFFLINE until it registers again; it
+  returns to ACTIVE automatically unless an admin put it into maintenance.
 - Check machine connectivity.
 - Check time synchronization.
 - Check API key mismatch.
