@@ -1,12 +1,13 @@
 import React, { useState, forwardRef, useImperativeHandle } from 'react';
 import { Button } from '../../../components/ui';
+import { useCopy } from '../../../hooks/useCopy';
 import { Check, ClipboardList, Copy, Download, List, PenLine, Plus, Trash2 } from 'lucide-react';
 
 export const EnvVarsEditor = forwardRef(function EnvVarsEditor({ envVars, setEnvVars }, ref) {
   const [envMode, setEnvMode] = useState('single');
   const [bulkText, setBulkText] = useState('');
   const [bulkError, setBulkError] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [copied, copy] = useCopy();
 
   const addEnvVar = () => setEnvVars(prev => [...prev, { key: '', value: '' }]);
   const removeEnvVar = (index) => setEnvVars(prev => prev.filter((_, i) => i !== index));
@@ -90,9 +91,7 @@ export const EnvVarsEditor = forwardRef(function EnvVarsEditor({ envVars, setEnv
         .map(e => `${e.key}=${e.value}`)
         .join('\n');
     }
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    copy(text);
   };
 
   const filledCount = envVars.filter(e => e.key.trim()).length;

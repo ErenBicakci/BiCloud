@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { projectService } from '../../services/project.service';
 import { containerService } from '../../services/container.service';
-import { extractError } from '../../utils/common';
+import { extractError, isInDeployCooldown } from '../../utils/common';
 import { useToast } from '../../context/ToastContext';
 import { Card, Badge, Button, Spinner } from '../../components/ui';
 import { Modal } from '../../components/ui/Modal';
@@ -295,7 +295,7 @@ const ServicesTab = ({ projectId, images, onScale, onEdit, onDelete }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {images.map(img => {
-        const inCooldown = img.consecutiveDeployFailures >= 5 && img.lastDeployFailureAt;
+        const inCooldown = isInDeployCooldown(img);
         const isHealthy  = img.runningReplicas === img.desiredReplicas && img.desiredReplicas > 0;
 
         return (

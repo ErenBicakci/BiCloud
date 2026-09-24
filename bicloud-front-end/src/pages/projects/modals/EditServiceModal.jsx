@@ -105,7 +105,7 @@ const EditServiceForm = ({ service, onClose, onSuccess }) => {
         allowInternet: isAdmin ? allowInternet : (service.allowInternet ?? false),
         exposeExternally,
       });
-      success('Service updated. Containers are being recreated with the new configuration.');
+      success('Service updated.');
       onSuccess();
       onClose();
     } catch (err) {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Modal } from './Modal';
 import { Spinner } from './index';
+import { useCopy } from '../../hooks/useCopy';
 import { containerService } from '../../services/container.service';
 import { extractError } from '../../utils/common';
 import {
@@ -31,7 +32,7 @@ const LogsDialog = ({ instance, onClose }) => {
   const [loading, setLoading] = useState(true);
   const [tail, setTail] = useState(200);
   const [follow, setFollow] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copied, copy] = useCopy(1400);
   const [searchTerm, setSearchTerm] = useState('');
   const [wrapLines, setWrapLines] = useState(true);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -78,11 +79,7 @@ const LogsDialog = ({ instance, onClose }) => {
     setAutoScroll(isAtBottom);
   };
 
-  const copyLogs = () => {
-    navigator.clipboard.writeText(logs);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1400);
-  };
+  const copyLogs = () => copy(logs);
 
   const downloadLogs = () => {
     const blob = new Blob([logs], { type: 'text/plain;charset=utf-8' });

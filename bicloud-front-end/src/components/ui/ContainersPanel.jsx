@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { containerService } from '../../services/container.service';
 import { extractError } from '../../utils/common';
+import { useCopy } from '../../hooks/useCopy';
 import { Card, Badge, Button, Spinner } from './index';
 import {
   Search, X, Filter, ArrowUpDown, ArrowUp, ArrowDown,
@@ -14,6 +15,7 @@ const STATUS_FILTERS = [
   { value: 'FAILED',  label: 'Failed',   color: 'var(--accent-red)' },
   { value: 'STOPPED', label: 'Stopped',  color: 'var(--text-muted)' },
   { value: 'PENDING', label: 'Pending',  color: 'var(--accent-yellow)' },
+  { value: 'STOPPING', label: 'Stopping', color: 'var(--accent-yellow)' },
 ];
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
@@ -94,7 +96,7 @@ export const ContainersPanel = ({ projectId, serviceName, reloadKey, onLogs, onS
   };
 
   const counts   = data.statusCounts || {};
-  const totalAll = (counts.RUNNING || 0) + (counts.FAILED || 0) + (counts.STOPPED || 0) + (counts.PENDING || 0);
+  const totalAll = Object.values(counts).reduce((sum, n) => sum + n, 0);
 
   return (
     <Card style={{ padding: 0 }}>
@@ -348,7 +350,7 @@ const UsageCell = ({ used, limit }) => {
 };
 
 const GatewayUrlCell = ({ url }) => {
-  const [copied, setCopied] = React.useState(false);
+  const [copied, copy] = useCopy();
   if (!url) return <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>—</span>;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -357,7 +359,7 @@ const GatewayUrlCell = ({ url }) => {
         maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block',
       }} title={url}>{url}</code>
       <button
-        onClick={() => { navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+        onClick={() => copy(url)}
         style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 3, display: 'inline-flex' }}
         title="Copy"
       >

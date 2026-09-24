@@ -97,9 +97,9 @@ export default function WorkersPage() {
     return workers.filter(w => {
       const matchesStatus =
         statusFilter === 'ALL' ||
-        (statusFilter === 'ACTIVE' && w.status === 'ACTIVE') ||
+        (statusFilter === 'ACTIVE' && isOnline(w)) ||
         (statusFilter === 'MAINTENANCE' && w.status === 'MAINTENANCE') ||
-        (statusFilter === 'OFFLINE' && w.status !== 'ACTIVE' && w.status !== 'MAINTENANCE');
+        (statusFilter === 'OFFLINE' && !isOnline(w) && w.status !== 'MAINTENANCE');
 
       const q = searchQuery.toLowerCase().trim();
       const matchesSearch =
@@ -112,7 +112,7 @@ export default function WorkersPage() {
     });
   }, [workers, statusFilter, searchQuery]);
 
-  const activeCount = workers.filter(w => w.status === 'ACTIVE').length;
+  const activeCount = workers.filter(isOnline).length;
   const maintenanceCount = workers.filter(w => w.status === 'MAINTENANCE').length;
   const offlineCount = workers.length - activeCount - maintenanceCount;
   const runningContainers = workers.reduce((s, w) => s + (w.runningContainers || 0), 0);
@@ -425,6 +425,10 @@ const NetworkFact = ({ label, value }) => (
     <strong className="mono">{value}</strong>
   </div>
 );
+
+function isOnline(worker) {
+  return worker.status === 'ACTIVE' || worker.status === 'OVERLOADED';
+}
 
 function getBadgeVariant(status) {
   if (status === 'ACTIVE') return 'green';

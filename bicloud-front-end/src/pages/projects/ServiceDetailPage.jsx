@@ -2,8 +2,9 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { projectService } from '../../services/project.service';
 import { containerService } from '../../services/container.service';
-import { extractError } from '../../utils/common';
+import { extractError, isInDeployCooldown } from '../../utils/common';
 import { useToast } from '../../context/ToastContext';
+import { useCopy } from '../../hooks/useCopy';
 import { Badge, Button, Spinner } from '../../components/ui';
 import { Modal } from '../../components/ui/Modal';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
@@ -41,6 +42,8 @@ import {
   Trash2,
   Zap,
 } from 'lucide-react';
+
+const COPY_ALL = Symbol('all');
 
 export default function ServiceDetailPage() {
   const { id: projectId, serviceId } = useParams();
@@ -135,7 +138,7 @@ export default function ServiceDetailPage() {
   const isHealthy = runningCount === service.desiredReplicas && service.desiredReplicas > 0;
   const isPartial = runningCount > 0 && runningCount < service.desiredReplicas;
   const isStopped = runningCount === 0 && service.desiredReplicas === 0;
-  const inCooldown = service.consecutiveDeployFailures >= 5 && service.lastDeployFailureAt;
+  const inCooldown = isInDeployCooldown(service);
 
   const liveMetrics = metrics.filter(m => m.cpuPercent != null);
   const hasMetrics = liveMetrics.length > 0;
@@ -530,25 +533,12 @@ const EndpointRow = ({ label, badge, description, lines, disabled = false }) => 
 );
 
 const CopyLine = ({ label, value, disabled }) => {
-  const [copiedUrl, setCopiedUrl] = useState(false);
-  const [copiedCurl, setCopiedCurl] = useState(false);
+  const [copied, copy] = useCopy();
   const canCopy = !disabled && value && !value.toLowerCase().includes('disabled');
   const isHttpUrl = canCopy && (value.startsWith('http://') || value.startsWith('https://'));
 
-  const handleCopyUrl = () => {
-    if (!canCopy) return;
-    navigator.clipboard.writeText(value);
-    setCopiedUrl(true);
-    setTimeout(() => setCopiedUrl(false), 1500);
-  };
-
-  const handleCopyCurl = () => {
-    if (!canCopy) return;
-    const curlCmd = `curl -i "${value}"`;
-    navigator.clipboard.writeText(curlCmd);
-    setCopiedCurl(true);
-    setTimeout(() => setCopiedCurl(false), 1500);
-  };
+  const handleCopyUrl = () => canCopy && copy(value, 'url');
+  const handleCopyCurl = () => canCopy && copy(`curl -i "${value}"`, 'curl');
 
   return (
     <div>
@@ -576,7 +566,7 @@ const CopyLine = ({ label, value, disabled }) => {
               title="Copy curl command"
               aria-label="Copy curl command"
             >
-              {copiedCurl ? <Check size={14} color="var(--accent-green)" /> : <Terminal size={14} />}
+              {copied === 'curl' ? <Check size={14} color="var(--accent-green)" /> : <Terminal size={14} />}
             </button>
             <button
               type="button"
@@ -585,7 +575,7 @@ const CopyLine = ({ label, value, disabled }) => {
               title="Copy URL"
               aria-label="Copy URL"
             >
-              {copiedUrl ? <Check size={14} color="var(--accent-green)" /> : <Copy size={14} />}
+              {copied === 'url' ? <Check size={14} color="var(--accent-green)" /> : <Copy size={14} />}
             </button>
           </div>
         )}
@@ -608,22 +598,11 @@ const KvRow = ({ icon: Icon, label, value, valueColor, mono }) => (
 
 const EnvVarsSection = ({ envVars }) => {
   const [showValues, setShowValues] = useState(false);
-  const [copiedKey, setCopiedKey] = useState(null);
-  const [copiedAll, setCopiedAll] = useState(false);
+  const [copied, copy] = useCopy();
   const entries = Object.entries(envVars || {});
 
-  const handleCopy = (key, value) => {
-    navigator.clipboard.writeText(value);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(null), 1500);
-  };
-
-  const handleCopyAllAsEnv = () => {
-    const text = entries.map(([k, v]) => `${k}=${v}`).join('\n');
-    navigator.clipboard.writeText(text);
-    setCopiedAll(true);
-    setTimeout(() => setCopiedAll(false), 1500);
-  };
+  const handleCopy = (key, value) => copy(value, key);
+  const handleCopyAllAsEnv = () => copy(entries.map(([k, v]) => `${k}=${v}`).join('\n'), COPY_ALL);
 
   return (
     <div className="section-card" style={{ marginTop: 18, marginBottom: 18 }}>
@@ -641,11 +620,11 @@ const EnvVarsSection = ({ envVars }) => {
             <Button
               size="sm"
               variant="ghost"
-              icon={copiedAll ? Check : Copy}
+              icon={copied === COPY_ALL ? Check : Copy}
               onClick={handleCopyAllAsEnv}
               title="Copy all variables formatted as .env"
             >
-              {copiedAll ? 'Copied .env' : 'Copy all as .env'}
+              {copied === COPY_ALL ? 'Copied .env' : 'Copy all as .env'}
             </Button>
             <Button
               size="sm"
@@ -688,7 +667,7 @@ const EnvVarsSection = ({ envVars }) => {
                       title="Copy value"
                       aria-label="Copy value"
                     >
-                      {copiedKey === key ? <Check size={14} color="var(--accent-green)" /> : <Copy size={14} />}
+                      {copied === key ? <Check size={14} color="var(--accent-green)" /> : <Copy size={14} />}
                     </button>
                   </td>
                 </tr>
