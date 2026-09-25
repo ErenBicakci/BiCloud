@@ -5,10 +5,6 @@ spring.application.name=bicloud-gateway
 
 server.port=9000
 
-spring.cloud.compatibility-verifier.enabled=false
-
-spring.cloud.gateway.discovery.locator.enabled=false
-
 # Key for gateway-to-gateway and CP-to-gateway calls
 bicloud.gateway.api-key=CHANGE_ME
 
