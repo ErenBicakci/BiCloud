@@ -73,7 +73,7 @@ public class ProjectService {
 
     public void assertOwnerOrAdmin(UserProject project, BicloudUserDetails caller) {
         if (!caller.isAdmin() && !project.getOwner().getId().equals(caller.getId())) {
-            throw new ForbiddenException("You are not the owner of project: " + project.getName());
+            throw new ForbiddenException("You do not have access to this project.");
         }
     }
 

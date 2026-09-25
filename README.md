@@ -747,7 +747,7 @@ bicloud.gateway.url=http://localhost:9000
 bicloud.gateway.port=9000
 bicloud.gateway.api-key=CHANGE_ME_GATEWAY_KEY
 
-jwt.secret=CHANGE_ME_MIN_32_CHARS
+jwt.secret=CHANGE_ME_TO_A_RANDOM_SECRET_OF_AT_LEAST_32_CHARS
 jwt.expiration=86400000
 ```
 
