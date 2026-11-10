@@ -65,6 +65,11 @@ public class DynamicRoutingFilter implements GlobalFilter, Ordered {
                     "Host header is not in the expected format. Expected: {service}.{project}.bicloud.local");
         }
 
+        if (exchange.getRequest().getHeaders().containsKey(MeshRoutingFilter.HOPS_HEADER)
+                && isTrustedGatewayHop(exchange)) {
+            exchange.getAttributes().put(ClientForwardedHeadersFilter.TRUSTED_HOP_ATTR, true);
+        }
+
         Optional<ServiceInstance> resolved = registry.resolve(host.project(), host.service());
 
         if (resolved.isEmpty()) {

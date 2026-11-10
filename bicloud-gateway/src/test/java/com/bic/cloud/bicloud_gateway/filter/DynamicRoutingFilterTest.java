@@ -119,6 +119,33 @@ class DynamicRoutingFilterTest {
     }
 
     @Test
+    @DisplayName("only a verified gateway hop is marked trusted for X-Forwarded-* pass-through")
+    void onlyVerifiedHopIsMarkedTrusted() {
+        when(registry.resolve("alpha", "web")).thenReturn(Optional.of(instance("172.20.0.5", 8080)));
+        when(registry.isExternallyExposed("alpha", "web")).thenReturn(true);
+
+        ServerWebExchange forged = exchange("/", "web.alpha.bicloud.local")
+                .mutate()
+                .request(r -> r.headers(h -> {
+                    h.set(MeshRoutingFilter.HOPS_HEADER, "1");
+                    h.set(MeshRoutingFilter.GATEWAY_KEY_HEADER, "wrong");
+                }))
+                .build();
+        StepVerifier.create(filter.filter(forged, new CapturingChain())).verifyComplete();
+        assertThat(forged.getAttributes()).doesNotContainKey(ClientForwardedHeadersFilter.TRUSTED_HOP_ATTR);
+
+        ServerWebExchange trusted = exchange("/", "web.alpha.bicloud.local")
+                .mutate()
+                .request(r -> r.headers(h -> {
+                    h.set(MeshRoutingFilter.HOPS_HEADER, "1");
+                    h.set(MeshRoutingFilter.GATEWAY_KEY_HEADER, "gateway-secret");
+                }))
+                .build();
+        StepVerifier.create(filter.filter(trusted, new CapturingChain())).verifyComplete();
+        assertThat(trusted.getAttributes()).containsEntry(ClientForwardedHeadersFilter.TRUSTED_HOP_ATTR, true);
+    }
+
+    @Test
     @DisplayName("invalid host route names are rejected before registry lookup")
     void invalidHostRouteNamesAreRejected() {
         MockServerWebExchange exchange = exchange("/api/users", "web.egress-alpha.bicloud.local");

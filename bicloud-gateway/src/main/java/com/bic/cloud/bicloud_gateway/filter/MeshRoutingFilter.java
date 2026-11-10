@@ -84,6 +84,7 @@ public class MeshRoutingFilter implements GlobalFilter, Ordered {
         }
 
         if (gatewayHop) {
+            exchange.getAttributes().put(ClientForwardedHeadersFilter.TRUSTED_HOP_ATTR, true);
             String callerProject = exchange.getRequest().getHeaders().getFirst(CALLER_PROJECT_HEADER);
             if (callerProject == null || !callerProject.equalsIgnoreCase(target.project())) {
                 log.warn("[Mesh] Tenant isolation (hop): caller project={} -> {}/{} rejected",

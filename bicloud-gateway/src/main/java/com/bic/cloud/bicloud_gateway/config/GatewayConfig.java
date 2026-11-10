@@ -17,6 +17,8 @@ public class GatewayConfig {
                 // ("front.project.bicloud.local:9000") - both patterns must match.
                 .route("bicloud-dynamic-catch-all", r -> r
                         .host("**.bicloud.local", "**.bicloud.local:*")
+                        // apps need their own domain (absolute URLs, redirects, OAuth callbacks)
+                        .filters(f -> f.preserveHostHeader())
                         .uri("http://localhost:1"))  // placeholder - DynamicRoutingFilter overrides this
                 .route("bicloud-mesh", r -> r
                         .path("/_bicloud/mesh/**")
