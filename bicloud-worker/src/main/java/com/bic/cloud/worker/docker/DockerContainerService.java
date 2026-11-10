@@ -47,8 +47,13 @@ public class DockerContainerService {
 
         ExposedPort exposedPort = ExposedPort.tcp(req.getContainerPort());
 
+        long memoryBytes = req.getMemoryLimitMb().longValue() * 1024 * 1024;
+
+        // MemorySwap == Memory disables swap; otherwise Docker allows the same
+        // amount again as swap and the container can use twice its limit.
         HostConfig hostConfig = HostConfig.newHostConfig()
-                .withMemory(req.getMemoryLimitMb().longValue() * 1024 * 1024)
+                .withMemory(memoryBytes)
+                .withMemorySwap(memoryBytes)
                 .withNanoCPUs(req.getCpuLimitMillicores().longValue() * 1_000_000L)
                 .withCapDrop(Capability.ALL)
                 .withCapAdd(
