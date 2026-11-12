@@ -6,6 +6,10 @@ routes, heals and autoscales them across your machines.**
 Java 21 · Spring Boot 3.5 · Spring Cloud Gateway · docker-java · PostgreSQL ·
 React 19
 
+> [!WARNING]
+> Not a Kubernetes alternative: stateless HTTP services only, no persistent
+> volumes. See [Limitations](#limitations).
+
 ![BiCloud dashboard](docs/screenshots/dashboard.png)
 
 ## Highlights
@@ -210,8 +214,27 @@ Covers scheduling and anti-affinity, autoscaling, self-healing, reconciliation
 against stale snapshots, deployment concurrency, JWT, rate limiting, security
 rules, gateway and mesh routing.
 
-## Scope
+## Limitations
 
-Stateless HTTP services only. Not included: persistent volumes, TCP/UDP
-routing, private registries, TLS automation, persistent metrics/logs, database
-migrations (Hibernate manages the schema), rolling deploys.
+> [!WARNING]
+> BiCloud is **not a Kubernetes alternative** and is not meant for production
+> workloads. It is a from-scratch implementation of the core ideas behind
+> container platforms, built to learn and demonstrate how they work.
+
+It runs **stateless HTTP services only**. Not supported:
+
+- **Persistent volumes**: containers have no durable storage; data is lost
+  when a replica is replaced.
+- **Databases and other stateful services**: no StatefulSet equivalent, no
+  stable identities or ordered rollout.
+- **TCP/UDP routing**: the gateway only routes HTTP by `Host` header.
+- **Rolling or blue/green deploys**: no gradual rollout or traffic shifting
+  between versions.
+- **Health probes**: no HTTP readiness/liveness checks; health means "the
+  container is running".
+- **TLS and DNS**: no certificate automation or public DNS records.
+- **Private registries and secrets**: no registry credentials or encrypted
+  secrets; configuration is plain environment variables.
+- **Durable observability**: metrics and logs are kept in memory only.
+- **High availability of the control plane**: it is a single instance with a
+  single PostgreSQL database.
