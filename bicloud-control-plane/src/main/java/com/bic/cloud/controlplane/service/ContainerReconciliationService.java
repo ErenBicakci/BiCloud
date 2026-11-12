@@ -66,6 +66,7 @@ public class ContainerReconciliationService {
             if (!actualSet.contains(dockerId)) {
                 ci.setStatus(ContainerInstance.InstanceStatus.FAILED);
                 containerInstanceRepository.save(ci);
+                gatewayNotificationService.deregister(ci);
                 zombiesFound++;
 
                 log.warn("[Reconcile] Zombie container detected on worker '{}': instanceId={}, dockerId={}, service={} -> FAILED",
@@ -94,6 +95,15 @@ public class ContainerReconciliationService {
         for (ContainerInstance ci : failed) {
             String dockerId = ci.getDockerContainerId();
             if (dockerId == null || dockerId.isBlank() || !actualSet.contains(dockerId)) {
+                continue;
+            }
+
+            // Recovery is for containers marked FAILED by inference (worker went
+            // silent). If the worker itself saw the container exit, Docker will
+            // not restart it, so this snapshot predates the exit and is stale.
+            if (ci.getExitConfirmedAt() != null) {
+                log.info("[Reconcile] Ignoring stale snapshot for exited container on worker '{}': instanceId={}, dockerId={} (exit reported at {})",
+                        worker.getWorkerName(), ci.getId(), dockerId, ci.getExitConfirmedAt());
                 continue;
             }
 

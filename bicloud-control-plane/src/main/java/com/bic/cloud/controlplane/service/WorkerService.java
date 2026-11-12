@@ -31,6 +31,7 @@ public class WorkerService {
     private final ContainerInstanceRepository containerInstanceRepository;
     private final WorkerScoringService scoringService;
     private final AuditService auditService;
+    private final GatewayNotificationService gatewayNotificationService;
 
     private static final int CPU_OVERLOAD_THRESHOLD = 85;
     private static final int MEMORY_OVERLOAD_THRESHOLD_PERCENT = 90;
@@ -235,11 +236,23 @@ public class WorkerService {
             return;
         }
 
+        boolean newlyFailed = newStatus == ContainerInstance.InstanceStatus.FAILED
+                && instance.getStatus() != ContainerInstance.InstanceStatus.FAILED;
+
         instance.setStatus(newStatus);
+        // The worker saw the container stopped in Docker; remember it so a stale
+        // snapshot cannot flip it back to RUNNING (see ContainerReconciliationService).
+        instance.setExitConfirmedAt(newStatus == ContainerInstance.InstanceStatus.FAILED ? Instant.now() : null);
         containerInstanceRepository.save(instance);
 
         log.info("Container {} status updated to {} (worker: {}, message: {})",
                 dockerId, newStatus, request.getWorkerId(), request.getMessage());
+
+        // Stop routing to the dead replica now instead of waiting for the
+        // gateway's own periodic reconcile.
+        if (newlyFailed) {
+            gatewayNotificationService.deregister(instance);
+        }
     }
 
     private ContainerInstance.InstanceStatus parseStatus(String status) {

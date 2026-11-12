@@ -79,6 +79,7 @@ class ContainerReconciliationServiceTest {
 
         assertThat(zombie.getStatus()).isEqualTo(ContainerInstance.InstanceStatus.FAILED);
         verify(containerInstanceRepository).save(zombie);
+        verify(gatewayNotificationService).deregister(zombie);
     }
 
     @Test

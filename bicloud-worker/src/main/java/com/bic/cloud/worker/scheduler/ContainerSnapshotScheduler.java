@@ -38,15 +38,22 @@ public class ContainerSnapshotScheduler {
         }
 
         try {
-            List<String> runningIds = dockerContainerService.listManagedRunningContainers().stream()
-                    .map(Container::getId)
-                    .toList();
+            List<String> listedIds = runningIds();
 
-            List<ContainerStatsDto> stats = runningIds.stream()
+            // Stats are collected one container at a time (~2 s each), so the
+            // list above can be many seconds old by the time it is sent.
+            List<ContainerStatsDto> stats = listedIds.stream()
                     .map(statsCollector::collect)
                     .filter(java.util.Objects::nonNull)
                     .toList();
             metricsService.recordContainerStats(stats);
+
+            // Only report containers that are still running now; a container
+            // that died meanwhile must not be presented to the control plane
+            // as alive (it would be treated as recovered and get traffic again).
+            java.util.Set<String> stillRunning = new java.util.HashSet<>(runningIds());
+            List<String> runningIds = listedIds.stream().filter(stillRunning::contains).toList();
+            stats = stats.stream().filter(s -> stillRunning.contains(s.getDockerContainerId())).toList();
 
             ContainerSnapshotRequest snapshot = ContainerSnapshotRequest.builder()
                     .workerId(workerStartup.getWorkerId())
@@ -62,5 +69,11 @@ public class ContainerSnapshotScheduler {
         } catch (Exception e) {
             log.error("[Snapshot] Failed to build/send container snapshot: {}", e.getMessage());
         }
+    }
+
+    private List<String> runningIds() {
+        return dockerContainerService.listManagedRunningContainers().stream()
+                .map(Container::getId)
+                .toList();
     }
 }

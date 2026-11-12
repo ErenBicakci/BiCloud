@@ -43,6 +43,9 @@ class WorkerServiceContainerStatusTest {
     @Mock
     private AuditService auditService;
 
+    @Mock
+    private GatewayNotificationService gatewayNotificationService;
+
     @InjectMocks
     private WorkerService workerService;
 
@@ -56,7 +59,20 @@ class WorkerServiceContainerStatusTest {
         workerService.handleContainerStatusUpdate(failedReport(worker.getId()));
 
         assertThat(instance.getStatus()).isEqualTo(InstanceStatus.FAILED);
+        assertThat(instance.getExitConfirmedAt()).isNotNull();
         verify(containerInstanceRepository).save(instance);
+        verify(gatewayNotificationService).deregister(instance);
+    }
+
+    @Test
+    @DisplayName("a repeated exit report for an already FAILED container does not deregister again")
+    void repeatedFailedReportDoesNotDeregisterTwice() {
+        ContainerInstance instance = instance(InstanceStatus.FAILED);
+
+        workerService.handleContainerStatusUpdate(failedReport(worker.getId()));
+
+        assertThat(instance.getStatus()).isEqualTo(InstanceStatus.FAILED);
+        verify(gatewayNotificationService, never()).deregister(any());
     }
 
     @ParameterizedTest
@@ -69,6 +85,7 @@ class WorkerServiceContainerStatusTest {
 
         assertThat(instance.getStatus()).isEqualTo(status);
         verify(containerInstanceRepository, never()).save(any());
+        verify(gatewayNotificationService, never()).deregister(any());
     }
 
     @Test

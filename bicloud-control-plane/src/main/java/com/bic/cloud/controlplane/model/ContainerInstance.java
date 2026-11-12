@@ -43,6 +43,15 @@ public class ContainerInstance {
     @Column(name = "started_at")
     private Instant startedAt;
 
+    /**
+     * When the worker reported this Docker container as exited/dead.
+     * Managed containers run without a restart policy, so Docker never brings
+     * an exited container back on its own: a snapshot that still lists it was
+     * taken before the exit and must not resurrect it.
+     */
+    @Column(name = "exit_confirmed_at")
+    private Instant exitConfirmedAt;
+
     @PrePersist
     protected void onCreate() {
         this.createdAt = Instant.now();
