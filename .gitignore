@@ -1,44 +1,35 @@
-# --- Build çıktıları ---
+# --- Build output ---
 target/
 dist/
 node_modules/
 
-# --- Gerçek config dosyaları (secrets içerir) — .example kopyaları commit'lenir ---
+# --- Local config (may contain secrets); the .example copies are committed ---
 bicloud-control-plane/src/main/resources/application.properties
 bicloud-worker/src/main/resources/application.properties
 bicloud-gateway/src/main/resources/application.properties
 .env
+.env.*
+!.env.*.example
 
-# --- Worker çalışma zamanı kimliği ---
+# --- Worker runtime identity ---
 worker-id.txt
 
-# --- IDE / araç ---
-.idea/
-.claude/
-*.iml
-.vscode/
-
-# --- Tez / sunum / poster (repo dışı tutuluyor) ---
-*.pdf
-*.docx
-*.pptx
-*.zip
-~$*
-Sunum/
-poster_render/
-poster_unpacked/
-deploy-ubuntu/
-
-# --- OS ---
-Thumbs.db
-.DS_Store
-
-# --- Sertifika/anahtar dosyalari ---
+# --- Certificates / keys ---
 *.key
 *.crt
 *.pem
 bicloud-registry-certs/
 
-# --- Dahili dokumantasyon notlari (repo disi) ---
-docs/
-Docs/
+# --- Logs ---
+*.log
+logs/
+
+# --- IDE / tools ---
+.idea/
+*.iml
+.vscode/
+.claude/
+
+# --- OS ---
+Thumbs.db
+.DS_Store
