@@ -93,13 +93,14 @@ public class WorkerStartup {
         if (registered) return;
 
         try {
+            WorkerMetricsService.Capacity capacity = metricsService.getCapacity();
             WorkerRegisterRequest request = WorkerRegisterRequest.builder()
                     .workerId(workerId)
                     .workerName(workerProperties.getName())
                     .ipAddress(workerProperties.getIp())
                     .workerVersion(workerProperties.getVersion())
-                    .totalCpuCores(metricsService.getTotalCpuCores())
-                    .totalMemoryMb(metricsService.getTotalMemoryMb())
+                    .totalCpuCores(capacity.cpuCores())
+                    .totalMemoryMb(capacity.memoryMb())
                     .serverPort(serverPort)
                     .timestamp(Instant.now())
                     .build();

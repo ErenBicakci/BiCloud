@@ -6,6 +6,7 @@ import com.bic.cloud.worker.docker.DockerContainerService;
 import com.bic.cloud.worker.dto.ContainerSnapshotRequest;
 import com.bic.cloud.worker.dto.ContainerStatsDto;
 import com.bic.cloud.worker.metrics.ContainerStatsCollector;
+import com.bic.cloud.worker.metrics.WorkerMetricsService;
 import com.github.dockerjava.api.model.Container;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +25,7 @@ public class ContainerSnapshotScheduler {
     private final ControlPlaneHttpClient controlPlaneClient;
     private final WorkerStartup workerStartup;
     private final ContainerStatsCollector statsCollector;
+    private final WorkerMetricsService metricsService;
 
     @Scheduled(
             fixedDelayString = "${worker.container-snapshot-interval-ms:15000}",
@@ -44,6 +46,7 @@ public class ContainerSnapshotScheduler {
                     .map(statsCollector::collect)
                     .filter(java.util.Objects::nonNull)
                     .toList();
+            metricsService.recordContainerStats(stats);
 
             ContainerSnapshotRequest snapshot = ContainerSnapshotRequest.builder()
                     .workerId(workerStartup.getWorkerId())
